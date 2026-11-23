@@ -288,6 +288,7 @@
         <button class="btn" data-act="restore">データファイルを読み込む</button>
         <button class="btn" data-act="csv">Excel用に書き出す（CSV）</button>
         <input type="file" id="restoreFile" accept="application/json,.json" hidden>
+        <input type="file" id="xlsxFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
       <div class="actions">
         <button class="btn danger" data-act="reset">全部消して最初からにする</button>
@@ -301,7 +302,7 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
@@ -379,9 +380,10 @@ function renderMonth() {
   }).join('');
   const welcome = state.people.length ? '' : `
     <div class="welcome">${document.getElementById('bunny').outerHTML.replace('id="bunny"', '')}<div><b>はじめに</b>
-      <p>Excelの「名前」と「支払額」の列をコピーして貼り付ければ、名簿と金額が一度に入ります。1人ずつ入れる場合は、下の「新しい人の名前」から追加してください。ほかの端末から送ったリンクやバックアップがあれば、それも読み込めます。</p>
+      <p>いつもの給料表のExcelファイルを選ぶだけで、名簿と各月の金額がまとめて入ります。1人ずつ入れる場合は、下の「新しい人の名前」から追加してください。ほかの端末から送ったリンクやバックアップがあれば、それも読み込めます。</p>
       <div class="actions" style="margin:0">
-        <button class="btn primary" data-act="open-paste">Excelから貼り付けて入力</button>
+        <button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button>
+        <button class="btn" data-act="open-paste">Excelから貼り付け</button>
         <button class="btn" data-act="paste">送ったリンクを貼り付け</button>
         <button class="btn" data-act="restore">バックアップを読み込む</button>
       </div>
@@ -398,10 +400,12 @@ function renderMonth() {
       <div class="card tax"><div class="k">源泉税の合計</div><div class="v" id="tw">${yen(t.w)}円</div><div class="s">支払った月の翌月10日までに税務署へ納める額</div></div>
       <div class="card"><div class="k">振込額の合計</div><div class="v" id="tn">${yen(t.n)}円</div></div>
     </div>
-    <details class="pastebox" id="pastebox"><summary>Excelから貼り付けて入力</summary>
-      <p>Excelで「名前」と「支払額」の列を選んでコピーし、下に貼り付けてください。名前だけ貼れば、名簿だけ作れます。同じ名前の人がいれば、その人の${+ym.slice(5)}月の金額を上書きします。</p>
-      <textarea id="pasteArea" rows="6" placeholder="例）&#10;山田花子	24,000&#10;佐藤太郎	16,000"></textarea>
-      <div class="actions" style="margin-bottom:0"><button class="btn primary" data-act="paste-excel">${ymLabel(ym)}に入れる</button></div>
+    <details class="pastebox" id="pastebox"><summary>Excelから入力（ファイル・貼り付け）</summary>
+      <p>いつもの給料表（名前の列と「1月」「2月」…の列）のExcelファイルを選ぶと、<b>各月の支給額と名簿をまとめて取り込みます</b>。パソコンでは、ファイルをこの画面にドラッグしても読み込めます。</p>
+      <div class="actions" style="margin-top:0"><button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button></div>
+      <p>または、Excelで表をコピー（シート全体なら Ctrl＋A → Ctrl＋C）して下に貼り付けてください。「名前」と「支払額」の2列だけなら、${ymLabel(ym)}に入ります。</p>
+      <textarea id="pasteArea" rows="5" placeholder="ここに貼り付け&#10;例）山田花子	24,000"></textarea>
+      <div class="actions" style="margin-bottom:0"><button class="btn" data-act="paste-excel">貼り付けた内容を取り込む</button></div>
     </details>
     <div class="panel"><div class="scroll"><table class="mtable">
       <thead><tr><th>名前</th><th>支払額（入力）</th><th>源泉税</th><th>振込額</th><th></th></tr></thead>
@@ -486,7 +490,8 @@ function yearTableHtml(y, d) {
 }
 function startNote(y) {
   const startY = +state.startYm.slice(0, 4), startM = +state.startYm.slice(5);
-  return y === startY && startM > 1 ? `${y}年1〜${startM - 1}月分はこのアプリには入っていません（Excelの記録と合わせてください）。` : '';
+  const range = startM - 1 === 1 ? '1月' : `1〜${startM - 1}月`;
+  return y === startY && startM > 1 ? `${y}年${range}分はこのアプリには入っていません（Excelの記録と合わせてください）。` : '';
 }
 function renderYear() {
   const [minY, maxY] = yearRange();
@@ -688,8 +693,161 @@ function parsePaste(text) {
   }
   return out;
 }
+// ---- Excel（.xlsx）をそのまま読む（ほかの部品は使わない） ----
+async function readXlsx(file) {
+  if (!('DecompressionStream' in window)) throw new Error('この端末のブラウザが古いため読み込めません');
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const dec = new TextDecoder();
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Excelファイル（.xlsx）ではないようです');
+  const entries = {};
+  let p = dv.getUint32(eocd + 16, true);
+  for (let n = dv.getUint16(eocd + 10, true); n > 0 && dv.getUint32(p, true) === 0x02014b50; n--) {
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    entries[dec.decode(buf.subarray(p + 46, p + 46 + nlen))] =
+      { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), off: dv.getUint32(p + 42, true) };
+    p += 46 + nlen + xlen + clen;
+  }
+  const readText = async name => {
+    const e = entries[name];
+    if (!e) return null;
+    const start = e.off + 30 + dv.getUint16(e.off + 26, true) + dv.getUint16(e.off + 28, true);
+    const data = buf.subarray(start, start + e.size);
+    if (e.method === 0) return dec.decode(data);
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  };
+  const xml = s => new DOMParser().parseFromString(s, 'application/xml');
+  const wbText = await readText('xl/workbook.xml');
+  if (!wbText) throw new Error('Excelファイル（.xlsx）ではないようです');
+  // 共有文字列（ふりがなは除く）
+  const shared = [];
+  const ssText = await readText('xl/sharedStrings.xml');
+  if (ssText) for (const si of xml(ssText).getElementsByTagName('si')) {
+    shared.push([...si.getElementsByTagName('t')].filter(t => t.parentNode.localName !== 'rPh').map(t => t.textContent).join(''));
+  }
+  // シートを選ぶ（表示中の年の名前のシート、なければ最初のシート）
+  const rels = {};
+  const relText = await readText('xl/_rels/workbook.xml.rels');
+  if (relText) for (const r of xml(relText).getElementsByTagName('Relationship')) rels[r.getAttribute('Id')] = r.getAttribute('Target');
+  const sheets = [...xml(wbText).getElementsByTagName('sheet')].map(s => ({ name: s.getAttribute('name'), target: rels[s.getAttribute('r:id')] }));
+  const sheet = sheets.find(s => s.name.includes(String(year))) || sheets[0];
+  if (!sheet || !sheet.target) throw new Error('シートが見つかりません');
+  const path = sheet.target.startsWith('/') ? sheet.target.slice(1) : 'xl/' + sheet.target.replace(/^\.\//, '');
+  const shText = await readText(path);
+  if (!shText) throw new Error('シートが読めません');
+  const grid = [];
+  for (const c of xml(shText).getElementsByTagName('c')) {
+    const ref = c.getAttribute('r') || '';
+    const m = ref.match(/^([A-Z]+)(\d+)$/);
+    if (!m) continue;
+    let col = 0;
+    for (const ch of m[1]) col = col * 26 + ch.charCodeAt(0) - 64;
+    const row = +m[2] - 1;
+    const t = c.getAttribute('t');
+    const v = c.getElementsByTagName('v')[0];
+    let val = '';
+    if (t === 's' && v) val = shared[+v.textContent] ?? '';
+    else if (t === 'inlineStr') val = [...c.getElementsByTagName('t')].filter(x => x.parentNode.localName !== 'rPh').map(x => x.textContent).join('');
+    else if (v) val = v.textContent;
+    (grid[row] = grid[row] || [])[col - 1] = val;
+  }
+  return { grid: Array.from(grid, r => Array.from(r || [], x => x ?? '')), sheetName: sheet.name };
+}
+
+// ---- 給料表の形（名前の列＋「1月」「2月」…の列）を読み取る ----
+function findMonthHeader(grid) {
+  for (let r = 0; r < Math.min(grid.length, 10); r++) {
+    const cols = {};
+    (grid[r] || []).forEach((v, c) => {
+      const m = toHalf(String(v ?? '')).trim().match(/^(\d{1,2})\s*月/);
+      if (m && +m[1] >= 1 && +m[1] <= 12 && !(+m[1] in cols)) cols[+m[1]] = c;
+    });
+    if (Object.keys(cols).length >= 2) {
+      const y = (grid[r] || []).map(v => toHalf(String(v ?? '')).match(/(20\d\d)\s*年/)).find(Boolean);
+      return { row: r, cols, year: y ? +y[1] : null };
+    }
+  }
+  return null;
+}
+const isSkipName = name => !name || /^(名前|氏名|講師名?|合計|総計|小計|計)$/.test(nameKey(name)) || /^[¥￥\d０-９,，.\s円-]+$/.test(name);
+function importGrid(grid, label) {
+  const h = findMonthHeader(grid);
+  if (!h) return false;
+  const y = h.year || year;
+  const firstMonthCol = Math.min(...Object.values(h.cols));
+  // 名前の列：月の列より左で、文字の入っている数がいちばん多い列
+  let nameCol = 0, best = -1;
+  for (let c = 0; c < Math.max(1, firstMonthCol); c++) {
+    const n = grid.slice(h.row + 1).filter(r => r && String(r[c] ?? '').trim() && !/^[\d.,\s]+$/.test(String(r[c]))).length;
+    if (n > best) { best = n; nameCol = c; }
+  }
+  const people = [], amounts = [], netOnly = {};
+  for (const r of grid.slice(h.row + 1)) {
+    if (!r) continue;
+    const name = String(r[nameCol] ?? '').trim();
+    if (isSkipName(name) || name.length > 40) continue;
+    people.push(name);
+    for (const [m, c] of Object.entries(h.cols)) {
+      const g = parseAmount(String(r[c] ?? ''));
+      if (g > 0) amounts.push({ name, key: `${y}-${pad(+m)}`, amount: g });
+      else if (parseAmount(String(r[c + 1] ?? '')) > 0) netOnly[m] = (netOnly[m] || 0) + 1; // 手取りだけ入っている
+    }
+  }
+  if (!people.length) { alert('名前の行が見つかりませんでした。'); return true; }
+  const keys = [...new Set(amounts.map(a => a.key))].sort();
+  const byName = new Map(state.people.map(p => [nameKey(p.name), p]));
+  const newNames = [...new Set(people.map(nameKey))].filter(k => !byName.has(k));
+  const monthList = keys.map(k => +k.slice(5) + '月').join('・');
+  const warn = Object.keys(netOnly).length
+    ? `\n\n※ ${Object.keys(netOnly).sort((a, b) => a - b).map(m => m + '月').join('・')}は、支給額が空欄で手取りだけの人がいます（${Object.values(netOnly).reduce((s, n) => s + n, 0)}件）。この分は取り込めません。`
+    : '';
+  const msg = `「${label}」から${y}年の分を取り込みます。\n・名簿：${new Set(people.map(nameKey)).size}人（新しく追加 ${newNames.length}人）\n・金額：${monthList || 'なし'}（${amounts.length}件）\n同じ人・同じ月の金額は上書きします。${warn}\n\nよろしいですか？`;
+  if (!confirm(msg)) return true;
+  // 名簿
+  const recent = keys.slice(-3);
+  people.forEach((name, i) => {
+    if (byName.has(nameKey(name))) return;
+    const active = amounts.some(a => a.name === name && recent.includes(a.key));
+    const p = { id: 'p' + Date.now() + '_' + i, name };
+    if (!active) p.hidden = true;
+    state.people.push(p); byName.set(nameKey(name), p);
+  });
+  // 金額
+  for (const a of amounts) {
+    const p = byName.get(nameKey(a.name));
+    state.pay[a.key] = state.pay[a.key] || {};
+    state.pay[a.key][p.id] = a.amount;
+    if (recent.includes(a.key)) p.hidden = false;
+  }
+  if (keys.length && keys[0] < state.startYm) state.startYm = keys[0];
+  save();
+  if (keys.length) { ym = keys[keys.length - 1]; year = +ym.slice(0, 4); }
+  view = 'month'; render();
+  alert(`取り込みました（${ymLabel(ym)}を表示しています）。`);
+  return true;
+}
+async function importXlsxFile(file) {
+  if (!file) return;
+  if (!/\.xlsx$/i.test(file.name)) { alert('Excelファイル（.xlsx）を選んでください。'); return; }
+  try {
+    const { grid, sheetName } = await readXlsx(file);
+    if (importGrid(grid, `${file.name}（${sheetName}）`)) return;
+    // 月の列がない表：「名前」「支払額」の2列として、表示中の月に入れる
+    applyRows(parsePaste(grid.map(r => (r || []).join('\t')).join('\n')));
+  } catch (e) {
+    alert('Excelファイルを読み込めませんでした。\n' + (e && e.message ? e.message : ''));
+  }
+}
 function applyPaste() {
-  const rows = parsePaste(document.getElementById('pasteArea').value);
+  const text = document.getElementById('pasteArea').value;
+  if (importGrid(text.split(/\r?\n/).map(l => l.split('\t')), '貼り付けた表')) return;
+  applyRows(parsePaste(text));
+}
+function applyRows(rows) {
   if (!rows.length) { alert('読み取れる行がありませんでした。\n「名前」と「支払額」の列をコピーして貼り付けてください。'); return; }
   const byName = new Map(state.people.map(p => [nameKey(p.name), p]));
   const newCount = new Set(rows.filter(r => !byName.has(nameKey(r.name))).map(r => nameKey(r.name))).size;
@@ -787,6 +945,7 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'paste-excel': applyPaste(); break;
+    case 'pick-xlsx': document.getElementById('xlsxFile').click(); break;
     case 'open-paste': {
       const box = document.getElementById('pastebox');
       box.open = true; box.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -824,6 +983,19 @@ document.getElementById('restoreFile').addEventListener('change', async e => {
     alert('読み込みました。');
   } catch (err) { alert('読み込めないファイルでした。'); }
   finally { e.target.value = ''; }
+});
+
+document.getElementById('xlsxFile').addEventListener('change', async e => {
+  await importXlsxFile(e.target.files[0]);
+  e.target.value = '';
+});
+// パソコン：Excelファイルを画面にドラッグして読み込む
+document.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
+document.addEventListener('drop', e => {
+  const f = e.dataTransfer?.files?.[0];
+  if (!f) return;
+  e.preventDefault();
+  importXlsxFile(f);
 });
 
 function loadIssuer() {
