@@ -190,6 +190,10 @@
       <label>発行者名（支払明細に入ります）<input id="issuerName" placeholder="例：教室名・事業者名"></label>
       <label>住所・連絡先（任意）<input id="issuerAddr" placeholder="例：東京都○○市… / 03-0000-0000"></label>
       <div class="actions">
+        <button class="btn" data-act="send">ほかの端末へデータを送る（リンク）</button>
+        <button class="btn" data-act="paste">コピーしたリンクを貼り付けて読み込む</button>
+      </div>
+      <div class="actions">
         <button class="btn" data-act="backup">バックアップを保存</button>
         <button class="btn" data-act="restore">データファイルを読み込む</button>
         <button class="btn" data-act="csv">Excel用に書き出す（CSV）</button>
@@ -204,7 +208,7 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
@@ -282,8 +286,11 @@ function renderMonth() {
   }).join('');
   const welcome = state.people.length ? '' : `
     <div class="welcome"><b>はじめに</b>
-      <p>ほかの端末で使っていたデータ（バックアップ）や「初期データ」のファイルがあれば読み込んでください。ない場合は、下の「新しい人の名前」から追加して始められます。</p>
-      <button class="btn primary" data-act="restore">データファイルを読み込む</button>
+      <p>データの取り込みリンクを受け取っている場合は、そのリンクを開くだけで入ります（iPhoneのホーム画面アプリでは、リンクをコピーして下の「貼り付けて読み込む」）。バックアップのファイルがある場合は「データファイルを読み込む」。どれもなければ、下の「新しい人の名前」から追加して始められます。</p>
+      <div class="actions" style="margin:0">
+        <button class="btn primary" data-act="paste">コピーしたリンクを貼り付けて読み込む</button>
+        <button class="btn" data-act="restore">データファイルを読み込む</button>
+      </div>
     </div>`;
   document.getElementById('view').innerHTML = `${welcome}
     <div class="monthbar">
@@ -493,6 +500,67 @@ async function saveBackup() {
   state.lastBackup = todayStr(); save(); renderBackupInfo();
 }
 
+// ---- リンクでデータを渡す ----
+// データはURLの「#」より後ろに入れる。この部分はサーバーへ送られないので、GitHubには届かない。
+function encodeData(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeData(code) {
+  let s = code.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0))));
+}
+const appUrl = () => location.origin + location.pathname;
+function importCode(code) {
+  let d;
+  try { d = decodeData(code); if (!d || !Array.isArray(d.people) || !d.pay || !d.startYm) throw 0; }
+  catch (e) { alert('リンクのデータを読み取れませんでした。リンクが途中で切れていないか確かめてください。'); return false; }
+  const n = d.people.length;
+  const msg = `${n}人分のデータを、この端末に読み込みますか？` + (state.people.length ? '\n（今この端末に入っているデータは置き換わります）' : '');
+  if (!confirm(msg)) return false;
+  restoreFrom(JSON.stringify(d));
+  alert('データを読み込みました。');
+  return true;
+}
+function checkImportHash() {
+  const m = location.hash.match(/^#import=([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search); // アドレス欄からデータを消す
+  importCode(m[1]);
+}
+window.addEventListener('hashchange', checkImportHash);
+async function pasteImport() {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); } catch (e) {}
+  if (!/#import=|^[A-Za-z0-9_-]{40,}$/.test((text || '').trim())) {
+    text = prompt('受け取ったリンク（またはコード）を貼り付けてください') || '';
+  }
+  text = text.trim();
+  if (!text) return;
+  const m = text.match(/#import=([A-Za-z0-9_-]+)/) || text.match(/^([A-Za-z0-9_-]+)$/);
+  if (!m) { alert('リンクの形が正しくないようです。'); return; }
+  importCode(m[1]);
+}
+async function sendLink() {
+  if (!state.people.length) { alert('送るデータがまだありません。'); return; }
+  const url = appUrl() + '#import=' + encodeData(state);
+  const touch = matchMedia('(pointer: coarse)').matches;
+  if (touch && navigator.share) {
+    try { await navigator.share({ title: '報酬かんたん計算のデータ', url }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('データ入りのリンクをコピーしました。\n\nメールやLINEで自分に送り、もう一方の端末で開いてください。\n（iPhoneのホーム画面アプリでは、リンクをコピーして「貼り付けて読み込む」）\n\n※リンクには名前と金額が入っています。自分以外には送らないでください。');
+  } catch (e) {
+    prompt('このリンクをコピーして、もう一方の端末へ送ってください', url);
+  }
+}
+
 // ---- アプリとして入れる ----
 let installPrompt = null;
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -567,6 +635,8 @@ document.addEventListener('click', async e => {
       download('報酬_一覧.csv', '﻿' + lines.join('\r\n'), 'text/csv');
       break;
     }
+    case 'send': sendLink(); break;
+    case 'paste': pasteImport(); break;
     case 'backup': saveBackup(); break;
     case 'restore': document.getElementById('restoreFile').click(); break;
     case 'install':
@@ -616,6 +686,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 loadIssuer();
 render();
 renderInstall();
+setTimeout(checkImportHash, 0);
 </script>
 </body>
 </html>
