@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>報酬かんたん計算</title>
+<meta name="description" content="支払額を入れるだけで源泉税と振込額を自動計算。支払明細をPDFにできます。">
+<meta name="theme-color" content="#2f6f5e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="報酬計算">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style id="pageStyle">@page { size: A4 portrait; margin: 14mm; }</style>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1f2328; --sub: #6b7078; --line: #e4e2dc;
+    --accent: #2f6f5e; --accent-soft: #e3efe9; --warn: #a8471f; --warn-soft: #fbeee6; --muted-row: #fafaf8;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; font-size: 15px; }
+  .wrap { max-width: 880px; margin: 0 auto;
+    padding: calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(60px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
+  .vtabs { margin-left: auto; display: flex; gap: 4px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px; }
+  .vtab { border: 0; background: none; font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px;
+    cursor: pointer; color: var(--ink); }
+  .vtab.on { background: var(--accent); color: #fff; }
+  .hint { color: var(--sub); font-size: 13px; margin: 4px 0 10px; }
+  .install { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--sub);
+    background: var(--card); border: 1px dashed var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; }
+  .banner { background: var(--warn-soft); border: 1px solid #f0d3c2; color: #6b2e12; border-radius: 10px;
+    padding: 10px 12px; font-size: 13px; margin-bottom: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .welcome { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+  .welcome p { margin: 6px 0 10px; color: var(--sub); }
+  .monthbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .nav { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--card);
+    font-size: 20px; line-height: 1; cursor: pointer; color: var(--ink); }
+  .nav:disabled { opacity: .3; cursor: default; }
+  .ym { font-size: 22px; font-weight: 700; min-width: 140px; text-align: center; }
+  .paydate { margin-left: auto; font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
+  .paydate input { font: inherit; font-size: 14px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--ink); background: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .card .k { font-size: 12px; color: var(--sub); }
+  .card .v { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .card.tax .v { color: var(--warn); }
+  .card .s { font-size: 11px; color: var(--sub); margin-top: 2px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  th { font-size: 12px; color: var(--sub); font-weight: 600; background: #fbfaf7; }
+  th:first-child, td:first-child { text-align: left; }
+  td.name { font-weight: 600; }
+  .mtable td.name { cursor: pointer; }
+  td.name small { display: block; font-weight: 400; color: var(--sub); font-size: 11px; }
+  tr.zero td { background: var(--muted-row); color: #9a9ea5; }
+  tr.zero td.name { color: #8a8e95; }
+  tfoot td { font-weight: 700; background: var(--accent-soft); border-bottom: 0; }
+  input.amt { width: 110px; text-align: right; font: inherit; font-variant-numeric: tabular-nums;
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  input.amt:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  td.ops { width: 1%; }
+  .mini { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
+    padding: 3px 8px; cursor: pointer; color: var(--accent); }
+  .mini:disabled { color: #c4c6ca; cursor: default; }
+  .x { border: 0; background: none; color: #b5b8bd; cursor: pointer; font-size: 16px; padding: 2px 6px; }
+  .x:hover { color: var(--warn); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+  .btn { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.small { font-size: 12px; padding: 4px 10px; }
+  .btn:hover { filter: brightness(.97); }
+  .add { display: flex; gap: 8px; }
+  .add input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; width: 180px; background: #fff; color: var(--ink); }
+  details.hiddenlist { margin-top: 8px; font-size: 14px; }
+  details.hiddenlist summary { cursor: pointer; color: var(--sub); }
+  .hrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px;
+    border-bottom: 1px dashed var(--line); max-width: 360px; }
+  .foot { margin-top: 28px; padding-top: 14px; border-top: 1px dashed var(--line); color: var(--sub); font-size: 13px; }
+  .foot summary { cursor: pointer; font-size: 14px; color: var(--ink); }
+  .foot label { display: block; margin: 10px 0 0; }
+  .foot label input { display: block; width: 100%; max-width: 420px; font: inherit; font-size: 14px; color: var(--ink);
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 4px; background: #fff; }
+  #backupInfo { margin-top: 10px; }
+  .ver { margin-top: 6px; font-size: 11px; color: #a3a6ab; }
+  .y-table td, .y-table th { padding: 6px 8px; font-size: 13px; }
+  .y-table td.sum { font-weight: 700; background: #fbfaf7; }
+  .note { font-size: 12px; color: var(--sub); padding: 10px 12px; }
+
+  /* ---- スマホ ---- */
+  @media (max-width: 600px) {
+    body { font-size: 15px; }
+    .wrap { padding-left: calc(12px + env(safe-area-inset-left)); padding-right: calc(12px + env(safe-area-inset-right)); padding-top: calc(14px + env(safe-area-inset-top)); }
+    h1 { font-size: 18px; }
+    .vtabs { margin-left: auto; }
+    .vtab { padding: 6px 10px; font-size: 13px; }
+    .ym { font-size: 20px; min-width: 0; flex: 1; }
+    .paydate { margin-left: 0; width: 100%; }
+    .paydate input { font-size: 16px; flex: 1; }
+    .cards { gap: 6px; }
+    .card { padding: 8px 10px; border-radius: 10px; }
+    .card .k { font-size: 11px; }
+    .card .v { font-size: 16px; }
+    .card .s { display: none; }
+    .mtable thead { display: none; }
+    .mtable tr { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; column-gap: 8px;
+      padding: 9px 12px; border-bottom: 1px solid var(--line); }
+    .mtable td { border: 0; padding: 0; background: none !important; white-space: nowrap; }
+    .mtable td.name { grid-column: 1 / 3; grid-row: 1; white-space: normal; }
+    .mtable td.amtc { grid-column: 3; grid-row: 1; }
+    .mtable td.w, .mtable td.n { grid-row: 2; text-align: left; font-size: 12px; color: var(--sub); padding-top: 5px; }
+    .mtable td.w { grid-column: 1; }
+    .mtable td.n { grid-column: 2; }
+    .mtable td.w::before { content: '源泉 '; }
+    .mtable td.n::before { content: '振込 '; }
+    .mtable td.ops { grid-column: 3; grid-row: 2; text-align: right; padding-top: 5px; width: auto; }
+    .mtable tr.zero { background: var(--muted-row); }
+    .mtable tfoot tr { background: var(--accent-soft); }
+    .mtable tfoot td.w, .mtable tfoot td.n { color: var(--ink); }
+    input.amt { width: 124px; font-size: 16px; padding: 7px 8px; }
+    .add { flex: 1 1 100%; }
+    .add input { flex: 1; width: auto; font-size: 16px; }
+    .actions .btn { flex: 1 1 auto; }
+    .foot label input { font-size: 16px; }
+  }
+
+  /* ---- 印刷・PDF ---- */
+  #print { display: none; }
+  @media print {
+    body { background: #fff; }
+    .app { display: none !important; }
+    #print { display: block; }
+  }
+  .doc { color: #000; font-size: 10.5pt; font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif; }
+  .doc .page { break-after: page; }
+  .doc .page:last-child { break-after: auto; }
+  .doc h2 { font-size: 18pt; text-align: center; letter-spacing: .3em; margin: 0 0 18px; font-weight: 700; }
+  .doc h3 { font-size: 14pt; margin: 0 0 6px; }
+  .doc .meta { display: flex; justify-content: space-between; font-size: 10pt; margin-bottom: 14px; color: #333; }
+  .doc table { width: 100%; border-collapse: collapse; }
+  .doc th, .doc td { border: 1px solid #999; padding: 6px 8px; text-align: right; font-variant-numeric: tabular-nums; background: none; color: #000; }
+  .doc th { background: #f0f0f0; font-weight: 600; font-size: 9.5pt; }
+  .doc th:first-child, .doc td:first-child { text-align: left; }
+  .doc tfoot td { font-weight: 700; background: #f7f7f7; }
+  .doc .small { font-size: 9pt; color: #333; margin-top: 10px; }
+  .doc .issuer { margin-top: 30px; text-align: right; font-size: 10.5pt; line-height: 1.7; }
+  .stmt { max-width: 150mm; margin: 0 auto; padding-top: 10mm; }
+  .stmt .date { text-align: right; font-size: 10pt; }
+  .stmt .to { font-size: 15pt; border-bottom: 1px solid #000; display: inline-block; min-width: 70mm;
+    padding: 0 4mm 2px 0; margin: 14px 0 16px; }
+  .stmt p { margin: 0 0 16px; }
+  .stmt .kv th { width: 55%; text-align: left; background: #f4f4f4; font-size: 10.5pt; }
+  .stmt .kv th small { font-weight: 400; font-size: 8.5pt; }
+  .stmt .kv td { font-size: 12pt; }
+  .stmt .kv tr.total th, .stmt .kv tr.total td { font-weight: 700; font-size: 13pt; border-top: 2px solid #000; }
+  .stmt .paid { margin-top: 12px; font-size: 10.5pt; }
+  .doc.wide th, .doc.wide td { padding: 4px 5px; font-size: 8.5pt; }
+</style>
+</head>
+<body>
+<div class="app">
+<div class="wrap">
+  <header>
+    <h1>報酬かんたん計算</h1>
+    <div class="vtabs">
+      <button class="vtab" data-view="month">月の入力</button>
+      <button class="vtab" data-view="year">年間まとめ</button>
+    </div>
+  </header>
+  <p class="hint">支払額を入れるだけで、源泉税（10.21%・1円未満切り捨て）と振込額が自動で出ます。入力はこの端末の中に自動保存されます。</p>
+  <div id="install"></div>
+  <div id="banner"></div>
+  <main id="view"></main>
+
+  <section class="foot">
+    <details id="settings">
+      <summary>設定・データ</summary>
+      <label>発行者名（支払明細に入ります）<input id="issuerName" placeholder="例：教室名・事業者名"></label>
+      <label>住所・連絡先（任意）<input id="issuerAddr" placeholder="例：東京都○○市… / 03-0000-0000"></label>
+      <div class="actions">
+        <button class="btn" data-act="backup">バックアップを保存</button>
+        <button class="btn" data-act="restore">データファイルを読み込む</button>
+        <button class="btn" data-act="csv">Excel用に書き出す（CSV）</button>
+        <input type="file" id="restoreFile" accept="application/json,.json" hidden>
+      </div>
+    </details>
+    <div id="backupInfo"></div>
+    <div class="ver" id="ver"></div>
+  </section>
+</div>
+</div>
+<div id="print" class="doc"></div>
+
+<script>
+const APP_VERSION = '1.0';
+// 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
+const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
+const KEY = 'hoshu-kantan';
+
+// ---- 計算ルール（ここだけ見れば計算がわかる） ----
+// 報酬の源泉徴収：100万円以下は10.21%、超えた部分は20.42%。1円未満切り捨て。
+function withholding(amount) {
+  if (!amount || amount <= 0) return 0;
+  if (amount <= 1000000) return Math.floor(amount * 1021 / 10000);
+  return Math.floor((1000000 * 1021 + (amount - 1000000) * 2042) / 10000);
+}
+const net = a => (a || 0) - withholding(a);
+
+// ---- 年月の小道具 ----
+const pad = n => String(n).padStart(2, '0');
+const todayYm = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1); };
+function ymAdd(ym, n) {
+  let y = +ym.slice(0, 4), m = +ym.slice(5) + n;
+  y += Math.floor((m - 1) / 12);
+  m = ((m - 1) % 12 + 12) % 12 + 1;
+  return y + '-' + pad(m);
+}
+const ymLabel = ym => `${+ym.slice(0, 4)}年${+ym.slice(5)}月`;
+const dateLabel = s => s ? `${+s.slice(0, 4)}年${+s.slice(5, 7)}月${+s.slice(8, 10)}日` : '';
+const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+const yen = n => (n || 0).toLocaleString('ja-JP');
+const parseYen = s => parseInt(String(s).replace(/[^\d]/g, ''), 10) || 0;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---- データ ----
+let state = load();
+let view = 'month';
+let ym = todayYm() < state.startYm ? state.startYm : todayYm();
+let year = +ym.slice(0, 4);
+
+function load() {
+  try {
+    const saved = localStorage.getItem(KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return structuredClone(SEED);
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+}
+const amt = (k, id) => (state.pay[k] && state.pay[k][id]) || 0;
+function setAmt(k, id, v) {
+  state.pay[k] = state.pay[k] || {};
+  if (v > 0) state.pay[k][id] = v; else delete state.pay[k][id];
+  save();
+}
+const person = id => state.people.find(p => p.id === id);
+function totals(k) {
+  let g = 0, w = 0;
+  for (const p of state.people) { const a = amt(k, p.id); g += a; w += withholding(a); }
+  return { g, w, n: g - w };
+}
+const paidPeople = k => state.people.filter(p => amt(k, p.id) > 0);
+
+// ---- 月の入力画面 ----
+function renderMonth() {
+  const t = totals(ym);
+  const shown = state.people.filter(p => !p.hidden || amt(ym, p.id) > 0);
+  const hidden = state.people.filter(p => p.hidden && !(amt(ym, p.id) > 0));
+  const prev = ymAdd(ym, -1);
+  const rows = shown.map(p => {
+    const a = amt(ym, p.id);
+    return `<tr class="${a ? '' : 'zero'}">
+      <td class="name" data-rename="${p.id}" title="クリックで名前を変更">${esc(p.name)}${p.note ? `<small>${esc(p.note)}</small>` : ''}</td>
+      <td class="amtc"><input class="amt" inputmode="numeric" enterkeyhint="next" value="${a ? yen(a) : ''}" placeholder="0" data-id="${p.id}" aria-label="${esc(p.name)}の支払額"></td>
+      <td class="w">${a ? yen(withholding(a)) : '—'}</td>
+      <td class="n">${a ? yen(net(a)) : '—'}</td>
+      <td class="ops"><button class="mini" data-pdf="${p.id}" ${a ? '' : 'disabled'} title="この人の支払明細をPDFに">明細</button><button class="x" data-hide="${p.id}" title="一覧から外す" aria-label="${esc(p.name)}を一覧から外す">×</button></td>
+    </tr>`;
+  }).join('');
+  const welcome = state.people.length ? '' : `
+    <div class="welcome"><b>はじめに</b>
+      <p>ほかの端末で使っていたデータ（バックアップ）や「初期データ」のファイルがあれば読み込んでください。ない場合は、下の「新しい人の名前」から追加して始められます。</p>
+      <button class="btn primary" data-act="restore">データファイルを読み込む</button>
+    </div>`;
+  document.getElementById('view').innerHTML = `${welcome}
+    <div class="monthbar">
+      <button class="nav" data-act="prev" ${prev < state.startYm ? 'disabled' : ''} aria-label="前の月">‹</button>
+      <div class="ym">${ymLabel(ym)}</div>
+      <button class="nav" data-act="next" aria-label="次の月">›</button>
+      <label class="paydate">支払日 <input type="date" id="payDate" value="${state.payDate[ym] || ''}"></label>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="k">支払合計</div><div class="v" id="tg">${yen(t.g)}円</div></div>
+      <div class="card tax"><div class="k">源泉税の合計</div><div class="v" id="tw">${yen(t.w)}円</div><div class="s">支払った月の翌月10日までに税務署へ納める額</div></div>
+      <div class="card"><div class="k">振込額の合計</div><div class="v" id="tn">${yen(t.n)}円</div></div>
+    </div>
+    <div class="panel"><div class="scroll"><table class="mtable">
+      <thead><tr><th>名前</th><th>支払額（入力）</th><th>源泉税</th><th>振込額</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td class="name">合計</td><td class="amtc" id="fg">${yen(t.g)}</td><td class="w" id="fw">${yen(t.w)}</td><td class="n" id="fn">${yen(t.n)}</td><td class="ops"></td></tr></tfoot>
+    </table></div></div>
+    <div class="actions">
+      ${prev >= state.startYm ? `<button class="btn" data-act="copy">${+prev.slice(5)}月の金額をコピー</button>` : ''}
+      <form class="add" id="addForm"><input id="newName" placeholder="新しい人の名前" enterkeyhint="done"><button class="btn">＋ 追加</button></form>
+    </div>
+    <div class="actions">
+      <button class="btn primary" data-act="pdf-list">この月の一覧をPDFに</button>
+      <button class="btn primary" data-act="pdf-all">全員分の支払明細をPDFに</button>
+    </div>
+    ${hidden.length ? `<details class="hiddenlist"><summary>一覧から外した人（${hidden.length}人）</summary>
+      ${hidden.map(p => `<div class="hrow"><span>${esc(p.name)}</span><button class="btn small" data-show="${p.id}">一覧に戻す</button></div>`).join('')}
+    </details>` : ''}`;
+
+  const v = document.getElementById('view');
+  v.querySelectorAll('input.amt').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const val = parseYen(inp.value);
+      setAmt(ym, inp.dataset.id, val);
+      const tr = inp.closest('tr');
+      tr.classList.toggle('zero', !val);
+      tr.querySelector('.w').textContent = val ? yen(withholding(val)) : '—';
+      tr.querySelector('.n').textContent = val ? yen(net(val)) : '—';
+      tr.querySelector('[data-pdf]').disabled = !val;
+      const t2 = totals(ym);
+      for (const [id, x] of [['tg', t2.g], ['tw', t2.w], ['tn', t2.n]]) document.getElementById(id).textContent = yen(x) + '円';
+      for (const [id, x] of [['fg', t2.g], ['fw', t2.w], ['fn', t2.n]]) document.getElementById(id).textContent = yen(x);
+      renderBackupInfo();
+    });
+    inp.addEventListener('blur', () => { const val = parseYen(inp.value); inp.value = val ? yen(val) : ''; });
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const all = [...v.querySelectorAll('input.amt')];
+      const next = all[all.indexOf(inp) + 1];
+      if (next) next.focus(); else inp.blur();
+    });
+  });
+  document.getElementById('payDate').addEventListener('change', e => {
+    if (e.target.value) state.payDate[ym] = e.target.value; else delete state.payDate[ym];
+    save();
+  });
+  document.getElementById('addForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const name = document.getElementById('newName').value.trim();
+    if (!name) return;
+    state.people.push({ id: 'p' + Date.now(), name });
+    save(); render();
+  });
+}
+
+// ---- 年間まとめ画面 ----
+function yearData(y) {
+  const keys = Array.from({ length: 12 }, (_, i) => `${y}-${pad(i + 1)}`);
+  const people = state.people.filter(p => keys.some(k => amt(k, p.id)));
+  const rows = people.map(p => {
+    const months = keys.map(k => amt(k, p.id));
+    const g = months.reduce((s, a) => s + a, 0);
+    const w = months.reduce((s, a) => s + withholding(a), 0);
+    return { p, months, g, w };
+  });
+  const monthTotals = keys.map(totals);
+  const G = monthTotals.reduce((s, t) => s + t.g, 0), W = monthTotals.reduce((s, t) => s + t.w, 0);
+  return { keys, rows, monthTotals, G, W };
+}
+function yearRange() {
+  const startY = +state.startYm.slice(0, 4);
+  const ys = Object.keys(state.pay).map(k => +k.slice(0, 4));
+  return [startY, Math.max(+todayYm().slice(0, 4), startY, ...ys)];
+}
+function yearTableHtml(y, d) {
+  const head = '<th>名前</th>' + d.keys.map((_, i) => `<th>${i + 1}月</th>`).join('') + '<th>年間支払</th><th>源泉税</th><th>振込額</th>';
+  let body = d.rows.map(r => `<tr><td class="name">${esc(r.p.name)}</td>${r.months.map(a => `<td>${a ? yen(a) : ''}</td>`).join('')}
+    <td class="sum">${yen(r.g)}</td><td class="sum">${yen(r.w)}</td><td class="sum">${yen(r.g - r.w)}</td></tr>`).join('');
+  if (!d.rows.length) body = `<tr><td colspan="16" style="text-align:center;color:#888">この年の支払いはまだありません</td></tr>`;
+  const foot = `<tr><td>合計</td>${d.monthTotals.map(t => `<td>${t.g ? yen(t.g) : ''}</td>`).join('')}<td>${yen(d.G)}</td><td>${yen(d.W)}</td><td>${yen(d.G - d.W)}</td></tr>
+    <tr><td>源泉税（納付額）</td>${d.monthTotals.map(t => `<td>${t.w ? yen(t.w) : ''}</td>`).join('')}<td></td><td>${yen(d.W)}</td><td></td></tr>`;
+  return `<table class="y-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
+}
+function startNote(y) {
+  const startY = +state.startYm.slice(0, 4), startM = +state.startYm.slice(5);
+  return y === startY && startM > 1 ? `${y}年1〜${startM - 1}月分はこのアプリには入っていません（Excelの記録と合わせてください）。` : '';
+}
+function renderYear() {
+  const [minY, maxY] = yearRange();
+  year = Math.min(Math.max(year, minY), maxY);
+  const d = yearData(year);
+  const sn = startNote(year);
+  document.getElementById('view').innerHTML = `
+    <div class="monthbar">
+      <button class="nav" data-act="yprev" ${year <= minY ? 'disabled' : ''} aria-label="前の年">‹</button>
+      <div class="ym">${year}年</div>
+      <button class="nav" data-act="ynext" ${year >= maxY ? 'disabled' : ''} aria-label="次の年">›</button>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="k">年間の支払合計</div><div class="v">${yen(d.G)}円</div></div>
+      <div class="card tax"><div class="k">年間の源泉税</div><div class="v">${yen(d.W)}円</div></div>
+      <div class="card"><div class="k">年間の振込合計</div><div class="v">${yen(d.G - d.W)}円</div></div>
+    </div>
+    <div class="panel"><div class="scroll">${yearTableHtml(year, d)}</div>
+    <div class="note">${sn ? sn + '<br>' : ''}人ごとの「年間支払」「源泉税」は、年明けの支払調書づくりにそのまま使えます。</div></div>
+    <div class="actions"><button class="btn primary" data-act="pdf-year">年間まとめをPDFに</button></div>`;
+}
+
+// ---- PDF（印刷画面から「PDFに保存」） ----
+function issuerHtml() {
+  const i = state.issuer || {};
+  if (!i.name && !i.addr) return '';
+  return `<div class="issuer">${esc(i.name)}${i.addr ? '<br>' + esc(i.addr) : ''}</div>`;
+}
+function statementHtml(p, k) {
+  const a = amt(k, p.id), w = withholding(a);
+  const pd = state.payDate[k];
+  return `<section class="page stmt">
+    <div class="date">発行日　${dateLabel(todayStr())}</div>
+    <h2>支払明細書</h2>
+    <div class="to">${esc(p.name)}　様</div>
+    <p>${ymLabel(k)}分の報酬を、下記のとおりお支払いいたします。</p>
+    <table class="kv">
+      <tr><th>支払額（報酬）</th><td>${yen(a)}円</td></tr>
+      <tr><th>源泉所得税 <small>（復興特別所得税を含む・10.21%）</small></th><td>−${yen(w)}円</td></tr>
+      <tr class="total"><th>差引支払額（お振込額）</th><td>${yen(a - w)}円</td></tr>
+    </table>
+    ${pd ? `<div class="paid">支払日　${dateLabel(pd)}</div>` : ''}
+    ${issuerHtml()}
+  </section>`;
+}
+function listHtml(k) {
+  const ps = paidPeople(k), t = totals(k), pd = state.payDate[k];
+  return `<section class="page">
+    <h3>${ymLabel(k)}分　報酬支払一覧</h3>
+    <div class="meta"><span>${pd ? '支払日　' + dateLabel(pd) : ''}</span><span>作成日　${dateLabel(todayStr())}</span></div>
+    <table>
+      <thead><tr><th>名前</th><th>支払額</th><th>源泉税</th><th>振込額</th></tr></thead>
+      <tbody>${ps.map(p => { const a = amt(k, p.id); return `<tr><td>${esc(p.name)}</td><td>${yen(a)}</td><td>${yen(withholding(a))}</td><td>${yen(net(a))}</td></tr>`; }).join('')}</tbody>
+      <tfoot><tr><td>合計（${ps.length}人）</td><td>${yen(t.g)}</td><td>${yen(t.w)}</td><td>${yen(t.n)}</td></tr></tfoot>
+    </table>
+    <div class="small">源泉税の合計 ${yen(t.w)}円 は、支払った月の翌月10日までに納付します。</div>
+    ${issuerHtml()}
+  </section>`;
+}
+function yearPdfHtml(y) {
+  const d = yearData(y), sn = startNote(y);
+  return `<section class="page">
+    <h3>${y}年　報酬支払　年間まとめ</h3>
+    <div class="meta"><span>${esc(state.issuer?.name || '')}</span><span>作成日　${dateLabel(todayStr())}</span></div>
+    <div class="wide doc">${yearTableHtml(y, d)}</div>
+    ${sn ? `<div class="small">${sn}</div>` : ''}
+  </section>`;
+}
+function printDoc(title, html, landscape) {
+  document.getElementById('pageStyle').textContent = `@page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 14mm; }`;
+  document.getElementById('print').innerHTML = html;
+  const old = document.title;
+  document.title = title; // 保存するPDFのファイル名になる
+  const restore = () => { document.title = old; window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
+  setTimeout(() => window.print(), 50);
+}
+
+// ---- バックアップ ----
+function renderBackupInfo() {
+  const lb = state.lastBackup;
+  const days = lb ? Math.floor((Date.now() - new Date(lb).getTime()) / 864e5) : null;
+  const count = Object.values(state.pay).reduce((n, o) => n + Object.keys(o).length, 0);
+  document.getElementById('backupInfo').textContent =
+    lb ? `最後のバックアップ：${dateLabel(lb)}（${days}日前）` : '最後のバックアップ：まだありません';
+  const stale = count > 1 && (days === null || days > 30);
+  document.getElementById('banner').innerHTML = stale
+    ? `<div class="banner"><span>データはこの端末の中にだけ保存されています。月に1回はバックアップを保存してください。</span><button class="btn small" data-act="backup">今すぐ保存</button></div>`
+    : '';
+}
+function download(name, text, type) {
+  const blob = new Blob([text], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function saveBackup() {
+  const name = `報酬バックアップ_${todayStr()}.json`;
+  const text = JSON.stringify({ ...state, lastBackup: todayStr() }, null, 1);
+  const file = new File([text], name, { type: 'application/json' });
+  const touch = matchMedia('(pointer: coarse)').matches;
+  if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+    // スマホ：共有メニューから「ファイルに保存」やメール・LINE・Googleドライブへ送れる
+    try { await navigator.share({ files: [file], title: name }); }
+    catch (e) { if (e.name === 'AbortError') return; download(name, text, 'application/json'); }
+  } else {
+    download(name, text, 'application/json');
+  }
+  state.lastBackup = todayStr(); save(); renderBackupInfo();
+}
+
+// ---- アプリとして入れる ----
+let installPrompt = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function renderInstall() {
+  const box = document.getElementById('install');
+  if (isStandalone()) { box.innerHTML = ''; return; }
+  if (installPrompt) {
+    box.innerHTML = `<div class="install"><span>この端末にアプリとして入れると、アイコンからすぐ開けます。</span><button class="btn small primary" data-act="install">アプリとして入れる</button></div>`;
+  } else if (isIOS()) {
+    box.innerHTML = `<div class="install"><span>iPhone・iPadでは、Safariの共有ボタン（□に↑）→「ホーム画面に追加」でアプリになります。<br><b>先にホーム画面に追加してから</b>データを入れてください（Safariとアプリではデータが別々になります）。</span></div>`;
+  } else {
+    box.innerHTML = '';
+  }
+}
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; renderInstall(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; renderInstall(); });
+
+// ---- 全体 ----
+function render() {
+  document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  if (view === 'month') renderMonth(); else renderYear();
+  renderBackupInfo();
+}
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('button, [data-rename]');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.view) { view = d.view; render(); return; }
+  if (d.pdf) { const p = person(d.pdf); printDoc(`支払明細_${p.name}_${ymLabel(ym)}`, statementHtml(p, ym)); return; }
+  if (d.hide) {
+    const p = person(d.hide);
+    if (amt(ym, p.id) > 0) { alert('この月に金額が入っています。先に金額を消してください。'); return; }
+    if (!confirm(`${p.name} さんを一覧から外しますか？（過去の記録は残ります。あとで戻せます）`)) return;
+    p.hidden = true; save(); render(); return;
+  }
+  if (d.show) { person(d.show).hidden = false; save(); render(); return; }
+  if (d.rename) {
+    const p = person(d.rename);
+    const n = prompt('名前を変更', p.name);
+    if (n && n.trim()) { p.name = n.trim(); save(); render(); }
+    return;
+  }
+  switch (d.act) {
+    case 'prev': ym = ymAdd(ym, -1); render(); break;
+    case 'next': ym = ymAdd(ym, 1); render(); break;
+    case 'yprev': year--; render(); break;
+    case 'ynext': year++; render(); break;
+    case 'copy': {
+      const prev = ymAdd(ym, -1);
+      if (Object.keys(state.pay[ym] || {}).length && !confirm(`${ymLabel(ym)}にすでに入っている金額を、${ymLabel(prev)}の金額で上書きしますか？`)) return;
+      state.pay[ym] = { ...(state.pay[prev] || {}) };
+      save(); render(); break;
+    }
+    case 'pdf-list':
+      if (!paidPeople(ym).length) { alert('この月は金額が入っていません。'); return; }
+      printDoc(`報酬支払一覧_${ymLabel(ym)}`, listHtml(ym)); break;
+    case 'pdf-all': {
+      const ps = paidPeople(ym);
+      if (!ps.length) { alert('この月は金額が入っていません。'); return; }
+      printDoc(`支払明細_全員_${ymLabel(ym)}`, ps.map(p => statementHtml(p, ym)).join(''));
+      break;
+    }
+    case 'pdf-year': printDoc(`報酬年間まとめ_${year}年`, yearPdfHtml(year), true); break;
+    case 'csv': {
+      const lines = [['年月', '名前', '支払額', '源泉税', '振込額', '支払日'].join(',')];
+      for (const k of Object.keys(state.pay).sort()) for (const p of state.people) {
+        const a = amt(k, p.id);
+        if (a) lines.push([ymLabel(k), '"' + p.name.replace(/"/g, '""') + '"', a, withholding(a), net(a), dateLabel(state.payDate[k])].join(','));
+      }
+      download('報酬_一覧.csv', '﻿' + lines.join('\r\n'), 'text/csv');
+      break;
+    }
+    case 'backup': saveBackup(); break;
+    case 'restore': document.getElementById('restoreFile').click(); break;
+    case 'install':
+      if (installPrompt) { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; renderInstall(); }
+      break;
+  }
+});
+
+function restoreFrom(text) {
+  const d = JSON.parse(text);
+  if (!d || !Array.isArray(d.people) || !d.pay || !d.startYm) throw new Error('format');
+  d.payDate = d.payDate || {};
+  d.issuer = d.issuer || { name: '', addr: '' };
+  state = d; save();
+  ym = todayYm() < state.startYm ? state.startYm : todayYm();
+  year = +ym.slice(0, 4);
+  loadIssuer(); render();
+}
+document.getElementById('restoreFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const text = await f.text();
+    const hasData = state.people.length > 0;
+    if (hasData && !confirm('今のデータを、このファイルの内容に置き換えますか？')) return;
+    restoreFrom(text);
+    alert('読み込みました。');
+  } catch (err) { alert('読み込めないファイルでした。'); }
+  finally { e.target.value = ''; }
+});
+
+function loadIssuer() {
+  state.issuer = state.issuer || { name: '', addr: '' };
+  document.getElementById('issuerName').value = state.issuer.name || '';
+  document.getElementById('issuerAddr').value = state.issuer.addr || '';
+}
+document.getElementById('issuerName').addEventListener('input', e => { state.issuer.name = e.target.value; save(); });
+document.getElementById('issuerAddr').addEventListener('input', e => { state.issuer.addr = e.target.value; save(); });
+document.getElementById('ver').textContent = 'バージョン ' + APP_VERSION;
+
+// データが勝手に消されにくくする（対応している端末のみ）
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+// オフラインでも開けるようにする
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+loadIssuer();
+render();
+renderInstall();
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "id": "./",
+  "name": "報酬かんたん計算",
+  "short_name": "報酬計算",
+  "description": "支払額を入れるだけで源泉税と振込額を自動計算。支払明細をPDFにできます。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#2f6f5e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
