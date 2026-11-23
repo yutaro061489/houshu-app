@@ -1,10 +1,11 @@
 // オフラインでも開けるようにするための仕組み。
 // ネットにつながっているときは常に最新版を取りに行き、つながらないときは保存しておいた版を使う。
-const CACHE = 'houshu-v2';
+const CACHE = 'houshu-v3';
 const ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
