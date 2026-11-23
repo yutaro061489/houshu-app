@@ -1,6 +1,6 @@
 // オフラインでも開けるようにするための仕組み。
 // ネットにつながっているときは常に最新版を取りに行き、つながらないときは保存しておいた版を使う。
-const CACHE = 'houshu-v4';
+const CACHE = 'houshu-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  // 一時保存された古いファイルではなく、必ずサーバーから最新を取ってくる
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))));
   self.skipWaiting();
 });
 
@@ -28,8 +29,10 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // 画面（HTML）はブラウザの一時保存を使わず、毎回サーバーに新しい版がないか確かめる
+  const isPage = req.mode === 'navigate' || req.destination === 'document';
   e.respondWith(
-    fetch(req)
+    (isPage ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : fetch(req))
       .then(res => {
         if (res.ok) {
           const copy = res.clone();
