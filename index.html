@@ -269,7 +269,6 @@
       <button class="vtab" data-view="year">年間まとめ</button>
     </div>
   </header>
-  <p class="hint">支払額を入れるだけで、源泉税（10.21%・1円未満切り捨て）と振込額が自動で出ます。入力はこの端末の中に自動保存されます。</p>
   <div id="install"></div>
   <div id="banner"></div>
   <main id="view"></main>
@@ -302,7 +301,7 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.7';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
@@ -380,8 +379,7 @@ function renderMonth() {
   }).join('');
   const welcome = state.people.length ? '' : `
     <div class="welcome">${document.getElementById('bunny').outerHTML.replace('id="bunny"', '')}<div><b>はじめに</b>
-      <p>いつもの給料表のExcelファイルを選ぶだけで、名簿と各月の金額がまとめて入ります。1人ずつ入れる場合は、下の「新しい人の名前」から追加してください。ほかの端末から送ったリンクやバックアップがあれば、それも読み込めます。</p>
-      <div class="actions" style="margin:0">
+      <div class="actions" style="margin:10px 0 0">
         <button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button>
         <button class="btn" data-act="open-paste">Excelから貼り付け</button>
         <button class="btn" data-act="paste">送ったリンクを貼り付け</button>
@@ -397,14 +395,12 @@ function renderMonth() {
     </div>
     <div class="cards">
       <div class="card"><div class="k">支払合計</div><div class="v" id="tg">${yen(t.g)}円</div></div>
-      <div class="card tax"><div class="k">源泉税の合計</div><div class="v" id="tw">${yen(t.w)}円</div><div class="s">支払った月の翌月10日までに税務署へ納める額</div></div>
+      <div class="card tax"><div class="k">源泉税の合計</div><div class="v" id="tw">${yen(t.w)}円</div></div>
       <div class="card"><div class="k">振込額の合計</div><div class="v" id="tn">${yen(t.n)}円</div></div>
     </div>
     <details class="pastebox" id="pastebox"><summary>Excelから入力（ファイル・貼り付け）</summary>
-      <p>いつもの給料表（名前の列と「1月」「2月」…の列）のExcelファイルを選ぶと、<b>各月の支給額と名簿をまとめて取り込みます</b>。パソコンでは、ファイルをこの画面にドラッグしても読み込めます。</p>
-      <div class="actions" style="margin-top:0"><button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button></div>
-      <p>または、Excelで表をコピー（シート全体なら Ctrl＋A → Ctrl＋C）して下に貼り付けてください。「名前」と「支払額」の2列だけなら、${ymLabel(ym)}に入ります。</p>
-      <textarea id="pasteArea" rows="5" placeholder="ここに貼り付け&#10;例）山田花子	24,000"></textarea>
+      <div class="actions" style="margin-bottom:10px"><button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button></div>
+      <textarea id="pasteArea" rows="4" placeholder="Excelの表をここに貼り付け"></textarea>
       <div class="actions" style="margin-bottom:0"><button class="btn" data-act="paste-excel">貼り付けた内容を取り込む</button></div>
     </details>
     <div class="panel"><div class="scroll"><table class="mtable">
@@ -491,7 +487,7 @@ function yearTableHtml(y, d) {
 function startNote(y) {
   const startY = +state.startYm.slice(0, 4), startM = +state.startYm.slice(5);
   const range = startM - 1 === 1 ? '1月' : `1〜${startM - 1}月`;
-  return y === startY && startM > 1 ? `${y}年${range}分はこのアプリには入っていません（Excelの記録と合わせてください）。` : '';
+  return y === startY && startM > 1 ? `${range}分は入っていません` : '';
 }
 function renderYear() {
   const [minY, maxY] = yearRange();
@@ -510,7 +506,7 @@ function renderYear() {
       <div class="card"><div class="k">年間の振込合計</div><div class="v">${yen(d.G - d.W)}円</div></div>
     </div>
     <div class="panel"><div class="scroll">${yearTableHtml(year, d)}</div>
-    <div class="note">${sn ? sn + '<br>' : ''}人ごとの「年間支払」「源泉税」は、年明けの支払調書づくりにそのまま使えます。</div></div>
+    ${sn ? `<div class="note">${sn}</div>` : ''}</div>
     <div class="actions"><button class="btn primary" data-act="pdf-year">年間まとめをPDFに</button></div>`;
 }
 
@@ -579,7 +575,7 @@ function renderBackupInfo() {
     lb ? `最後のバックアップ：${dateLabel(lb)}（${days}日前）` : '最後のバックアップ：まだありません';
   const stale = count > 1 && (days === null || days > 30);
   document.getElementById('banner').innerHTML = stale
-    ? `<div class="banner"><span>データはこの端末の中にだけ保存されています。月に1回はバックアップを保存してください。</span><button class="btn small" data-act="backup">今すぐ保存</button></div>`
+    ? `<div class="banner"><span>バックアップを保存しましょう</span><button class="btn small" data-act="backup">今すぐ保存</button></div>`
     : '';
 }
 function download(name, text, type) {
@@ -878,9 +874,9 @@ function renderInstall() {
   const box = document.getElementById('install');
   if (isStandalone()) { box.innerHTML = ''; return; }
   if (installPrompt) {
-    box.innerHTML = `<div class="install"><span>この端末にアプリとして入れると、アイコンからすぐ開けます。</span><button class="btn small primary" data-act="install">アプリとして入れる</button></div>`;
+    box.innerHTML = `<div class="actions" style="margin-top:0"><button class="btn small primary" data-act="install">アプリとして入れる</button></div>`;
   } else if (isIOS()) {
-    box.innerHTML = `<div class="install"><span>iPhone・iPadでは、Safariの共有ボタン（□に↑）→「ホーム画面に追加」でアプリになります。<br><b>先にホーム画面に追加してから</b>データを入れてください（Safariとアプリではデータが別々になります）。</span></div>`;
+    box.innerHTML = `<div class="install"><span>共有ボタン →「ホーム画面に追加」でアプリになります</span></div>`;
   } else {
     box.innerHTML = '';
   }
