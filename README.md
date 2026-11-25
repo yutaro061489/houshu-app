@@ -21,7 +21,7 @@
 |---|---|
 | `index.html` | アプリ本体（画面・計算・Excel読み込み・PDF） |
 | `sw.js` | オフライン用。新しい版が出たら自動で切り替える |
-| `manifest.webmanifest` / `icons/` | アプリとして入れるための設定とアイコン（`icons/icon.svg` が元絵） |
+| `manifest.webmanifest` / `icons/` | アプリとして入れるための設定とアイコン（`icons/icon.svg` が元絵。`bunny-512.png` を縮小して 192・180〈iPhone用〉・32 を作る） |
 | `deploy.ps1` | Cloudflare Pages への公開 |
 
 ## 直して公開するとき

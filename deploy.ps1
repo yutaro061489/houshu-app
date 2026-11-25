@@ -1,4 +1,4 @@
-# Cloudflare Pages（https://ballet-kyuyo.pages.dev）へ公開する
+﻿# Cloudflare Pages（https://ballet-kyuyo.pages.dev）へ公開する
 # 使い方：このフォルダで  .\deploy.ps1
 # 初回やログインが切れているときは、ブラウザで Cloudflare の「Allow（許可）」を押す。
 $ErrorActionPreference = 'Stop'

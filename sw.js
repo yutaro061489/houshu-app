@@ -1,15 +1,15 @@
 // オフラインでも開けるようにするための仕組み。
 // ネットにつながっているときは常に最新版を取りに行き、つながらないときは保存しておいた版を使う。
-const CACHE = 'houshu-v6';
+const CACHE = 'houshu-v7';
 const ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
   './icons/icon.svg',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/apple-touch-icon.png',
-  './icons/favicon-32.png'
+  './icons/bunny-192.png',
+  './icons/bunny-512.png',
+  './icons/bunny-180.png',
+  './icons/bunny-32.png'
 ];
 
 self.addEventListener('install', e => {
