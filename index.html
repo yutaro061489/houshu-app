@@ -327,27 +327,45 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.9';
+const APP_VERSION = '1.10';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
 // クラスの単価（1コマ）。最初に入れておく金額。画面の「クラスの単価」で変えられる。
 const DEFAULT_RATES = [
   ['キッズ', 3000], ['児童C', 3500], ['児童B・A', 4000], ['子どものVa', 500],
-  ['大人', 4000], ['大人のVa', 2000], ['大人入門', 3000]
+  ['大人', 4000], ['大人のVa', 2000], ['大人入門', 2000], ['ポワント', 1000]
 ].map(([name, price], i) => ({ id: 'r' + (i + 1), name, price }));
+const RATES_V = 2; // 単価の初期値を変えたら上げる
 // 古いデータや受け取ったデータに、足りない入れ物を足す
 function normalize(s) {
   s.payDate = s.payDate || {};
   s.issuer = s.issuer || { name: '', addr: '' };
-  if (!Array.isArray(s.rates)) s.rates = structuredClone(DEFAULT_RATES);
   s.counts = s.counts || {};       // { 'YYYY-MM': { 人id: { クラスid: コマ数 } } }
   s.extra = s.extra || {};         // { 'YYYY-MM': { 人id: その他の金額 } }
   s.monthRates = s.monthRates || {}; // { 'YYYY-MM': { クラスid: その月の単価 } }（単価を変えても前の月は変わらない）
   s.hacoLessons = s.hacoLessons || {}; // { 'YYYY-MM': { 店舗: [{t:先生キー, n:先生名, s:開始, p:クラス名}] } }（hacomonoの予定表）
   s.hacoSkip = s.hacoSkip || [];       // 取り込まない先生（名簿にない人）
+  if (!Array.isArray(s.rates)) { s.rates = structuredClone(DEFAULT_RATES); s.ratesV = RATES_V; }
+  if ((s.ratesV || 1) < 2) {
+    // 2026-11-28 確定：大人入門 3,000→2,000円、ポワント 1,000円を追加
+    const r7 = s.rates.find(r => r.id === 'r7');
+    if (r7 && r7.price === 3000) r7.price = 2000;
+    for (const m of Object.values(s.monthRates)) if (m.r7 === 3000) m.r7 = 2000;
+    if (!s.rates.some(r => r.id === 'r8' || /ポワント/.test(r.name))) s.rates.push({ id: 'r8', name: 'ポワント', price: 1000 });
+    // コマ数で計算している月の金額を計算し直す
+    for (const [k, byId] of Object.entries(s.counts)) for (const [id, c] of Object.entries(byId)) {
+      const price = rid => s.monthRates[k]?.[rid] ?? s.rates.find(r => r.id === rid)?.price ?? 0;
+      const total = Object.entries(c).reduce((t, [rid, n]) => t + n * price(rid), 0) + (s.extra[k]?.[id] || 0);
+      s.pay[k] = s.pay[k] || {};
+      if (total > 0) s.pay[k][id] = total; else delete s.pay[k][id];
+    }
+    s.ratesV = 2;
+  }
   return s;
 }
+// 支払日：入れていなければ翌月1日（例：11月分は12月1日に支払い）
+const payDateOf = k => state.payDate[k] || ymAdd(k, 1) + '-01';
 const fresh = () => normalize(structuredClone(SEED));
 
 // ---- 計算ルール（ここだけ見れば計算がわかる） ----
@@ -500,7 +518,7 @@ function renderMonth() {
       <button class="nav" data-act="prev" ${prev < state.startYm ? 'disabled' : ''} aria-label="前の月">‹</button>
       <div class="ym">${ymLabel(ym)}</div>
       <button class="nav" data-act="next" aria-label="次の月">›</button>
-      <label class="paydate">支払日 <input type="date" id="payDate" value="${state.payDate[ym] || ''}"></label>
+      <label class="paydate">支払日 <input type="date" id="payDate" value="${payDateOf(ym)}"></label>
     </div>
     <div class="cards">
       <div class="card"><div class="k">支払合計</div><div class="v" id="tg">${yen(t.g)}円</div></div>
@@ -691,7 +709,7 @@ function issuerHtml() {
 }
 function statementHtml(p, k) {
   const a = amt(k, p.id), w = withholding(a);
-  const pd = state.payDate[k];
+  const pd = payDateOf(k);
   return `<section class="page stmt">
     <div class="date">発行日　${dateLabel(todayStr())}</div>
     <h2>支払明細書</h2>
@@ -719,7 +737,7 @@ function breakdownHtml(k, id) {
   return `<table class="bd"><thead><tr><th>内訳</th><th>単価</th><th>コマ数</th><th>金額</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
 }
 function listHtml(k) {
-  const ps = paidPeople(k), t = totals(k), pd = state.payDate[k];
+  const ps = paidPeople(k), t = totals(k), pd = payDateOf(k);
   return `<section class="page">
     <h3>${ymLabel(k)}分　報酬支払一覧</h3>
     <div class="meta"><span>${pd ? '支払日　' + dateLabel(pd) : ''}</span><span>作成日　${dateLabel(todayStr())}</span></div>
@@ -1060,11 +1078,11 @@ function parseDelimited(text) {
   return rows.filter(r => r.some(x => x.trim() !== ''));
 }
 const afterColon = s => String(s || '').replace(/^[^:：]*[:：]\s*/, '').trim(); // 「IN0004: 黒丸愛美」→「黒丸愛美」
-// hacomonoのクラス名 → この画面のクラス（単価）。ポワントは数えない。
+// hacomonoのクラス名 → この画面のクラス（単価）
 function hacoRate(prog, store) {
   const p = prog.replace(/\s/g, '');
   const pick = id => (rateById(id) ? id : null);
-  if (/ポワント/.test(p)) return null;
+  if (/ポワント/.test(p)) return pick('r8');
   if (/キッズ/.test(p)) return pick('r1');
   if (/児童C/i.test(p)) return pick('r2');
   if (/児童[AB]/i.test(p)) return pick('r3');
@@ -1241,7 +1259,7 @@ document.addEventListener('click', async e => {
       const lines = [['年月', '名前', '支払額', '源泉税', '振込額', '支払日'].join(',')];
       for (const k of Object.keys(state.pay).sort()) for (const p of state.people) {
         const a = amt(k, p.id);
-        if (a) lines.push([ymLabel(k), '"' + p.name.replace(/"/g, '""') + '"', a, withholding(a), net(a), dateLabel(state.payDate[k])].join(','));
+        if (a) lines.push([ymLabel(k), '"' + p.name.replace(/"/g, '""') + '"', a, withholding(a), net(a), dateLabel(payDateOf(k))].join(','));
       }
       download('報酬_一覧.csv', '﻿' + lines.join('\r\n'), 'text/csv');
       break;
