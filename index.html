@@ -313,6 +313,7 @@
         <button class="btn" data-act="csv">Excel用に書き出す（CSV）</button>
         <input type="file" id="restoreFile" accept="application/json,.json" hidden>
         <input type="file" id="xlsxFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        <input type="file" id="hacoFile" accept=".csv,.tsv,text/csv,text/tab-separated-values" multiple hidden>
       </div>
       <div class="actions">
         <button class="btn danger" data-act="reset">全部消して最初からにする</button>
@@ -326,7 +327,7 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
@@ -343,6 +344,8 @@ function normalize(s) {
   s.counts = s.counts || {};       // { 'YYYY-MM': { 人id: { クラスid: コマ数 } } }
   s.extra = s.extra || {};         // { 'YYYY-MM': { 人id: その他の金額 } }
   s.monthRates = s.monthRates || {}; // { 'YYYY-MM': { クラスid: その月の単価 } }（単価を変えても前の月は変わらない）
+  s.hacoLessons = s.hacoLessons || {}; // { 'YYYY-MM': { 店舗: [{t:先生キー, n:先生名, s:開始, p:クラス名}] } }（hacomonoの予定表）
+  s.hacoSkip = s.hacoSkip || [];       // 取り込まない先生（名簿にない人）
   return s;
 }
 const fresh = () => normalize(structuredClone(SEED));
@@ -504,8 +507,9 @@ function renderMonth() {
       <div class="card tax"><div class="k">源泉税の合計</div><div class="v" id="tw">${yen(t.w)}円</div></div>
       <div class="card"><div class="k">振込額の合計</div><div class="v" id="tn">${yen(t.n)}円</div></div>
     </div>
-    <details class="pastebox" id="pastebox"><summary>Excelから入力（ファイル・貼り付け）</summary>
-      <div class="actions" style="margin-bottom:10px"><button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button></div>
+    <details class="pastebox" id="pastebox"><summary>Excel・hacomonoから入力</summary>
+      <div class="actions" style="margin-bottom:4px"><button class="btn primary" data-act="pick-xlsx">Excelファイルを選ぶ</button><button class="btn primary" data-act="pick-haco">hacomonoの予定表を選ぶ</button></div>
+      <p>hacomono：予約スケジュール › エクスポート（店舗ごとのCSV）</p>
       <textarea id="pasteArea" rows="4" placeholder="Excelの表をここに貼り付け"></textarea>
       <div class="actions" style="margin-bottom:0"><button class="btn" data-act="paste-excel">貼り付けた内容を取り込む</button></div>
     </details>
@@ -828,7 +832,7 @@ async function pasteImport() {
 }
 async function sendLink() {
   if (!state.people.length) { alert('送るデータがまだありません。'); return; }
-  const url = appUrl() + '#import=' + encodeData(state);
+  const url = appUrl() + '#import=' + encodeData({ ...state, hacoLessons: undefined }); // 予定表の細かい記録はリンクに入れない（長くなるため）
   const touch = matchMedia('(pointer: coarse)').matches;
   if (touch && navigator.share) {
     try { await navigator.share({ title: '報酬かんたん計算のデータ', url }); return; }
@@ -1039,6 +1043,118 @@ function applyRows(rows) {
   });
   save(); render();
 }
+// ---- hacomonoの予定表（予約スケジュール › エクスポートのCSV）から、先生ごとのコマ数を入れる ----
+function parseDelimited(text) {
+  text = text.replace(/^﻿/, '');
+  const delim = text.split('\n', 1)[0].includes('\t') ? '\t' : ',';
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ''));
+}
+const afterColon = s => String(s || '').replace(/^[^:：]*[:：]\s*/, '').trim(); // 「IN0004: 黒丸愛美」→「黒丸愛美」
+// hacomonoのクラス名 → この画面のクラス（単価）。ポワントは数えない。
+function hacoRate(prog, store) {
+  const p = prog.replace(/\s/g, '');
+  const pick = id => (rateById(id) ? id : null);
+  if (/ポワント/.test(p)) return null;
+  if (/キッズ/.test(p)) return pick('r1');
+  if (/児童C/i.test(p)) return pick('r2');
+  if (/児童[AB]/i.test(p)) return pick('r3');
+  if (/Va|ヴァリエ|バリエ/i.test(p)) return pick(/スクール/.test(store) ? 'r4' : 'r6');
+  if (/入門/.test(p)) return pick('r7');
+  if (/大人|オープン|ジュニア/.test(p)) return pick('r5');
+  return null;
+}
+// その月の予定表（全店舗）から、先生ごとのコマ数を出す
+function hacoCounts(k) {
+  const all = Object.entries(state.hacoLessons[k] || {}).flatMap(([store, ls]) => ls.map(l => ({ ...l, store, rid: hacoRate(l.p, store) })));
+  // 同じ先生・同じ開始時刻は1コマで、単価の高い方（合同レッスン、大人とジュニアが同じレッスンとして2つ登録されているなど）
+  all.sort((a, b) => (b.rid ? priceOf(k, b.rid) : -1) - (a.rid ? priceOf(k, a.rid) : -1));
+  const seen = new Set(), per = new Map(), skipped = {};
+  let dup = 0;
+  for (const l of all) {
+    const key = l.t + '|' + l.s;
+    if (seen.has(key)) { dup++; continue; }
+    seen.add(key);
+    const rid = l.rid;
+    if (!rid) { skipped[l.p] = (skipped[l.p] || 0) + 1; continue; }
+    if (!per.has(l.t)) per.set(l.t, { name: l.n, c: {} });
+    per.get(l.t).c[rid] = (per.get(l.t).c[rid] || 0) + 1;
+  }
+  return { per, dup, skipped, stores: Object.keys(state.hacoLessons[k] || {}) };
+}
+async function importHacoFiles(files) {
+  if (!files.length) return;
+  const got = {}; // { 月: { 店舗: [レッスン] } }
+  for (const f of files) {
+    const rows = parseDelimited(await f.text());
+    const h = (rows[0] || []).map(x => x.trim());
+    const cS = h.indexOf('開始日時'), cT = h.indexOf('スタッフコード'), cP = h.indexOf('プログラムコード'), cStore = h.indexOf('店舗コード');
+    if (cS < 0 || cT < 0 || cP < 0) {
+      alert(`「${f.name}」は、hacomonoの予定表ではないようです。\nhacomonoの「予約スケジュール › エクスポート」で作ったCSVを選んでください。`);
+      return;
+    }
+    for (const r of rows.slice(1)) {
+      const s = (r[cS] || '').trim();
+      const n = afterColon(r[cT]);
+      if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) || !n) continue;
+      const k = s.slice(0, 7), store = (cStore >= 0 && r[cStore]) || f.name;
+      ((got[k] = got[k] || {})[store] = got[k][store] || []).push({ t: nameKey(n), n, s: s.slice(0, 16), p: afterColon(r[cP]) });
+    }
+  }
+  const months = Object.keys(got);
+  if (!months.length) { alert('レッスンが見つかりませんでした。'); return; }
+  // いちばんレッスンの多い月を取り込む
+  const size = k => Object.values(got[k]).reduce((s, ls) => s + ls.length, 0);
+  const k = months.sort((a, b) => size(b) - size(a))[0];
+  // 同じ店舗の予定表は入れ替え、ほかの店舗の分は残す（店舗ごとに別々に取り込んでもよい）
+  const before = structuredClone(state.hacoLessons[k] || {});
+  state.hacoLessons[k] = { ...before, ...got[k] };
+  const { per, dup, skipped, stores } = hacoCounts(k);
+  // 名簿と照らし合わせる
+  const byName = new Map(state.people.map(p => [nameKey(p.name), p]));
+  const targets = [], toAdd = [];
+  for (const [t, v] of per) {
+    let p = byName.get(t);
+    if (!p) {
+      if (state.hacoSkip.includes(t)) continue;
+      if (!confirm(`名簿にない先生「${v.name}」がいます。\n名簿に追加して、コマ数を入れますか？\n\n「キャンセル」にすると、この先生は今後も取り込みません。`)) { state.hacoSkip.push(t); continue; }
+      p = { id: 'p' + Date.now() + '_' + toAdd.length, name: v.name };
+      toAdd.push(p);
+    }
+    targets.push({ p, c: v.c });
+  }
+  if (!targets.length) { state.hacoLessons[k] = before; save(); alert('名簿の先生のレッスンがありませんでした。'); return; }
+  const tot = c => Object.entries(c).reduce((s, [rid, n]) => s + n * priceOf(k, rid), 0);
+  const lines = targets.map(({ p, c }) => `・${p.name}：${state.rates.filter(r => c[r.id]).map(r => r.name + ' ' + c[r.id]).join('、')}（${yen(tot(c))}円）`);
+  const notes = [`店舗：${stores.map(afterColon).join('、')}`];
+  if (dup) notes.push(`同じ先生・同じ時間に重なっているレッスン（${dup}件）は、1コマ（単価の高い方）で数えています。`);
+  const sk = Object.entries(skipped);
+  if (sk.length) notes.push(`数えないクラス：${sk.map(([n, c]) => `${n}（${c}）`).join('、')}`);
+  const msg = `hacomonoの${ymLabel(k)}のレッスンを、${ymLabel(k)}の報酬に入れます。\n\n${lines.join('\n')}\n\n${notes.join('\n')}\n\nこの先生たちの${ymLabel(k)}のコマ数は、この内容に置き換わります。よろしいですか？`;
+  if (!confirm(msg)) { state.hacoLessons[k] = before; save(); return; }
+  toAdd.forEach(p => state.people.push(p));
+  snapRates(k);
+  state.counts[k] = state.counts[k] || {};
+  for (const { p, c } of targets) {
+    p.hidden = false;
+    state.counts[k][p.id] = { ...c };
+    syncAmt(k, p.id);
+  }
+  if (k < state.startYm) state.startYm = k;
+  ym = k; year = +k.slice(0, 4); view = 'month';
+  save(); render();
+  alert(`取り込みました（${ymLabel(k)}を表示しています）。`);
+}
+
 function resetAll() {
   if (!confirm('この端末に入っている名前・金額・設定を、すべて消して最初の状態に戻します。\n元に戻せません。必要なら先に「バックアップを保存」してください。\n\n消してよろしいですか？')) return;
   state = fresh(); save();
@@ -1133,6 +1249,7 @@ document.addEventListener('click', async e => {
     case 'add-rate': addRate(); break;
     case 'paste-excel': applyPaste(); break;
     case 'pick-xlsx': document.getElementById('xlsxFile').click(); break;
+    case 'pick-haco': document.getElementById('hacoFile').click(); break;
     case 'open-paste': {
       const box = document.getElementById('pastebox');
       box.open = true; box.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1174,13 +1291,20 @@ document.getElementById('xlsxFile').addEventListener('change', async e => {
   await importXlsxFile(e.target.files[0]);
   e.target.value = '';
 });
-// パソコン：Excelファイルを画面にドラッグして読み込む
+document.getElementById('hacoFile').addEventListener('change', async e => {
+  try { await importHacoFiles([...e.target.files]); }
+  catch (err) { alert('hacomonoの予定表を読み込めませんでした。\n' + (err && err.message ? err.message : '')); }
+  finally { e.target.value = ''; }
+});
+// パソコン：Excelファイルやhacomonoの予定表を画面にドラッグして読み込む
 document.addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
 document.addEventListener('drop', e => {
-  const f = e.dataTransfer?.files?.[0];
-  if (!f) return;
+  const files = [...(e.dataTransfer?.files || [])];
+  if (!files.length) return;
   e.preventDefault();
-  importXlsxFile(f);
+  const csv = files.filter(f => /\.(csv|tsv)$/i.test(f.name));
+  if (csv.length) importHacoFiles(csv).catch(err => alert('hacomonoの予定表を読み込めませんでした。\n' + (err?.message || '')));
+  else importXlsxFile(files[0]);
 });
 
 function loadIssuer() {
