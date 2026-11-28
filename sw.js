@@ -1,6 +1,6 @@
 // オフラインでも開けるようにするための仕組み。
 // ネットにつながっているときは常に最新版を取りに行き、つながらないときは保存しておいた版を使う。
-const CACHE = 'houshu-v8';
+const CACHE = 'houshu-v9';
 const ASSETS = [
   './',
   './index.html',

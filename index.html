@@ -151,6 +151,25 @@
   .y-table td, .y-table th { padding: 7px 9px; font-size: 13px; }
   .y-table td.sum { font-weight: 700; background: rgba(255, 255, 255, .45); }
   .note { font-size: 12px; color: var(--sub); padding: 12px 14px; }
+  /* コマ数 */
+  .mini + .mini { margin-left: 4px; }
+  .mini.on { background: var(--accent-soft); color: var(--accent-deep); }
+  input.amt[readonly] { background: var(--accent-soft); cursor: pointer; }
+  tr.crow[hidden] { display: none !important; }
+  tr.crow td { text-align: left; white-space: normal; background: rgba(255, 255, 255, .38); padding: 10px 14px 14px; }
+  .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px 18px; }
+  .citem { display: flex; align-items: center; gap: 8px; font-family: var(--f-sans); font-weight: 500; font-size: 14px; }
+  .citem .cn { flex: 1; min-width: 0; }
+  .citem .cp { display: block; font-size: 11px; color: var(--sub); }
+  input.cnt { width: 64px; text-align: right; font-family: var(--f-latin); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
+    padding: 6px 8px; border: 0; border-radius: 10px; background: rgba(255, 251, 250, .95); color: var(--ink);
+    box-shadow: inset 0 1px 3px rgba(142, 82, 94, .14); }
+  input.cnt.ext, input.cnt.rprice { width: 96px; }
+  input.cnt::placeholder { color: #d4c3c6; }
+  input.cnt:focus, .rate-row input.rname:focus { outline: none; box-shadow: 0 0 0 3px rgba(184, 92, 110, .3); }
+  .rate-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .rate-row input.rname { flex: 1; min-width: 0; max-width: 240px; font: inherit; font-size: 14px; padding: 6px 10px; border: 0; border-radius: 10px;
+    background: rgba(255, 251, 250, .95); color: var(--ink); box-shadow: inset 0 1px 3px rgba(142, 82, 94, .14); }
 
   /* ---- スマホ ---- */
   @media (max-width: 600px) {
@@ -193,6 +212,10 @@
     .actions .btn { flex: 1 1 auto; }
     .foot label input { font-size: 16px; }
     .pastebox textarea { font-size: 16px; }
+    .mtable tr.crow { display: block; padding: 0 12px 12px; }
+    .mtable tr.crow td { display: block; padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, .5) !important; }
+    .cgrid { grid-template-columns: 1fr; }
+    input.cnt, .rate-row input.rname { font-size: 16px; }
   }
 
   /* ---- 印刷・PDF ---- */
@@ -227,6 +250,8 @@
   .stmt .kv tr.total th, .stmt .kv tr.total td { font-weight: 700; font-size: 13pt; border-top: 2px solid #000; }
   .stmt .paid { margin-top: 12px; font-size: 10.5pt; }
   .doc.wide th, .doc.wide td { padding: 4px 5px; font-size: 8.5pt; }
+  .stmt .bd { margin-top: 14px; }
+  .stmt .bd th, .stmt .bd td { padding: 4px 8px; font-size: 9.5pt; }
 </style>
 </head>
 <body>
@@ -301,10 +326,26 @@
 <div id="print" class="doc"></div>
 
 <script>
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 // 公開用：名前や金額は入っていない。最初に「データファイルを読み込む」か、名前を追加して始める。
 const SEED = { v: 2, startYm: '2026-11', issuer: { name: '', addr: '' }, people: [], pay: {}, payDate: {}, lastBackup: null };
 const KEY = 'hoshu-kantan';
+// クラスの単価（1コマ）。最初に入れておく金額。画面の「クラスの単価」で変えられる。
+const DEFAULT_RATES = [
+  ['キッズ', 3000], ['児童C', 3500], ['児童B・A', 4000], ['子どものVa', 500],
+  ['大人', 4000], ['大人のVa', 2000], ['大人入門', 3000]
+].map(([name, price], i) => ({ id: 'r' + (i + 1), name, price }));
+// 古いデータや受け取ったデータに、足りない入れ物を足す
+function normalize(s) {
+  s.payDate = s.payDate || {};
+  s.issuer = s.issuer || { name: '', addr: '' };
+  if (!Array.isArray(s.rates)) s.rates = structuredClone(DEFAULT_RATES);
+  s.counts = s.counts || {};       // { 'YYYY-MM': { 人id: { クラスid: コマ数 } } }
+  s.extra = s.extra || {};         // { 'YYYY-MM': { 人id: その他の金額 } }
+  s.monthRates = s.monthRates || {}; // { 'YYYY-MM': { クラスid: その月の単価 } }（単価を変えても前の月は変わらない）
+  return s;
+}
+const fresh = () => normalize(structuredClone(SEED));
 
 // ---- 計算ルール（ここだけ見れば計算がわかる） ----
 // 報酬の源泉徴収：100万円以下は10.21%、超えた部分は20.42%。1円未満切り捨て。
@@ -334,15 +375,17 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 // ---- データ ----
 let state = load();
 let view = 'month';
-let ym = todayYm() < state.startYm ? state.startYm : todayYm();
+let rateOpen = false;      // 「クラスの単価」を開いているか
+const openC = new Set();   // コマ数の欄を開いている人
+let ym =todayYm() < state.startYm ? state.startYm : todayYm();
 let year = +ym.slice(0, 4);
 
 function load() {
   try {
     const saved = localStorage.getItem(KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) return normalize(JSON.parse(saved));
   } catch (e) {}
-  return structuredClone(SEED);
+  return fresh();
 }
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
@@ -361,6 +404,69 @@ function totals(k) {
 }
 const paidPeople = k => state.people.filter(p => amt(k, p.id) > 0);
 
+// ---- コマ数から支払額を出す ----
+// 支払額 ＝ （クラスの単価 × コマ数）の合計 ＋ その他（手当など）
+const cnts = (k, id) => (state.counts[k] && state.counts[k][id]) || null;
+const extraAmt = (k, id) => (state.extra[k] && state.extra[k][id]) || 0;
+const usesCounts = (k, id) => { const c = cnts(k, id); return !!(c && Object.values(c).some(n => n > 0)) || !!extraAmt(k, id); };
+const rateById = rid => state.rates.find(r => r.id === rid);
+function priceOf(k, rid) {
+  const m = state.monthRates[k];
+  if (m && m[rid] != null) return m[rid];
+  return rateById(rid)?.price || 0;
+}
+function snapRates(k) {
+  if (!state.monthRates[k]) state.monthRates[k] = Object.fromEntries(state.rates.map(r => [r.id, r.price]));
+}
+function countTotal(k, id) {
+  let s = 0;
+  for (const [rid, n] of Object.entries(cnts(k, id) || {})) s += (n || 0) * priceOf(k, rid);
+  return s + extraAmt(k, id);
+}
+const syncAmt = (k, id) => setAmt(k, id, Math.max(0, countTotal(k, id)));
+function setCount(k, id, rid, n) {
+  snapRates(k);
+  state.counts[k] = state.counts[k] || {};
+  const c = state.counts[k][id] = state.counts[k][id] || {};
+  if (n > 0) c[rid] = n; else delete c[rid];
+  if (!Object.keys(c).length) delete state.counts[k][id];
+  syncAmt(k, id);
+}
+function setExtra(k, id, v) {
+  snapRates(k);
+  state.extra[k] = state.extra[k] || {};
+  if (v) state.extra[k][id] = v; else delete state.extra[k][id];
+  syncAmt(k, id);
+}
+function clearCounts(k, id) {
+  if (state.counts[k]) delete state.counts[k][id];
+  if (state.extra[k]) delete state.extra[k][id];
+}
+const parseSigned = s => (/^\s*[-−ー－]/.test(String(s)) ? -1 : 1) * parseYen(s);
+// 単価を変えると、表示している月から先が変わる（前の月はそのまま）
+function setRatePrice(rid, price) {
+  const r = rateById(rid); if (!r) return;
+  r.price = price;
+  for (const k of Object.keys(state.monthRates)) if (k >= ym) state.monthRates[k][rid] = price;
+  for (const k of Object.keys(state.counts)) if (k >= ym) for (const id of Object.keys(state.counts[k])) syncAmt(k, id);
+  save();
+}
+function addRate() {
+  const name = (prompt('クラスの名前') || '').trim();
+  if (!name) return;
+  const price = parseYen(prompt(`${name} の1コマの金額（円）`) || '');
+  state.rates.push({ id: 'r' + Date.now(), name, price });
+  rateOpen = true; save(); render();
+}
+function deleteRate(rid) {
+  const r = rateById(rid);
+  const used = Object.values(state.counts).some(m => Object.values(m).some(c => c[rid] > 0));
+  if (used) { alert(`「${r.name}」はコマ数が入っている月があるので消せません。`); return; }
+  if (!confirm(`「${r.name}」を消しますか？`)) return;
+  state.rates = state.rates.filter(x => x.id !== rid);
+  save(); render();
+}
+
 // ---- 月の入力画面 ----
 function renderMonth() {
   const t = totals(ym);
@@ -368,14 +474,14 @@ function renderMonth() {
   const hidden = state.people.filter(p => p.hidden && !(amt(ym, p.id) > 0));
   const prev = ymAdd(ym, -1);
   const rows = shown.map(p => {
-    const a = amt(ym, p.id);
-    return `<tr class="${a ? '' : 'zero'}">
+    const a = amt(ym, p.id), uc = usesCounts(ym, p.id), open = openC.has(p.id);
+    return `<tr class="${a ? '' : 'zero'}" data-row="${p.id}">
       <td class="name" data-rename="${p.id}" title="クリックで名前を変更">${esc(p.name)}${p.note ? `<small>${esc(p.note)}</small>` : ''}</td>
-      <td class="amtc"><input class="amt" inputmode="numeric" enterkeyhint="next" value="${a ? yen(a) : ''}" placeholder="0" data-id="${p.id}" aria-label="${esc(p.name)}の支払額"></td>
+      <td class="amtc"><input class="amt" inputmode="numeric" enterkeyhint="next" value="${a ? yen(a) : ''}" placeholder="0" data-id="${p.id}" aria-label="${esc(p.name)}の支払額" ${uc ? 'readonly title="コマ数から計算"' : ''}></td>
       <td class="w">${a ? yen(withholding(a)) : '—'}</td>
       <td class="n">${a ? yen(net(a)) : '—'}</td>
-      <td class="ops"><button class="mini" data-pdf="${p.id}" ${a ? '' : 'disabled'} title="この人の支払明細をPDFに">明細</button><button class="x" data-hide="${p.id}" title="一覧から外す" aria-label="${esc(p.name)}を一覧から外す">×</button></td>
-    </tr>`;
+      <td class="ops"><button class="mini${uc ? ' on' : ''}" data-cnt="${p.id}" aria-expanded="${open}" title="クラスのコマ数で計算">コマ数</button><button class="mini" data-pdf="${p.id}" ${a ? '' : 'disabled'} title="この人の支払明細をPDFに">明細</button><button class="x" data-hide="${p.id}" title="一覧から外す" aria-label="${esc(p.name)}を一覧から外す">×</button></td>
+    </tr>${countRow(p, open)}`;
   }).join('');
   const welcome = state.people.length ? '' : `
     <div class="welcome">${document.getElementById('bunny').outerHTML.replace('id="bunny"', '')}<div><b>はじめに</b>
@@ -403,13 +509,18 @@ function renderMonth() {
       <textarea id="pasteArea" rows="4" placeholder="Excelの表をここに貼り付け"></textarea>
       <div class="actions" style="margin-bottom:0"><button class="btn" data-act="paste-excel">貼り付けた内容を取り込む</button></div>
     </details>
+    <details class="pastebox" id="ratebox" ${rateOpen ? 'open' : ''}><summary>クラスの単価（1コマ）</summary>
+      <p>${ymLabel(ym)}から変わります</p>
+      ${state.rates.map(r => `<div class="rate-row"><input class="rname" value="${esc(r.name)}" data-rid="${r.id}" aria-label="クラスの名前"><input class="cnt rprice" inputmode="numeric" value="${yen(priceOf(ym, r.id))}" data-rid="${r.id}" aria-label="${esc(r.name)}の単価"><span>円</span><button class="x" data-delrate="${r.id}" aria-label="${esc(r.name)}を消す">×</button></div>`).join('')}
+      <div class="actions" style="margin-bottom:0"><button class="btn small" data-act="add-rate">＋ クラスを追加</button></div>
+    </details>
     <div class="panel"><div class="scroll"><table class="mtable">
       <thead><tr><th>名前</th><th>支払額（入力）</th><th>源泉税</th><th>振込額</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr><td class="name">合計</td><td class="amtc" id="fg">${yen(t.g)}</td><td class="w" id="fw">${yen(t.w)}</td><td class="n" id="fn">${yen(t.n)}</td><td class="ops"></td></tr></tfoot>
     </table></div></div>
     <div class="actions">
-      ${prev >= state.startYm ? `<button class="btn" data-act="copy">${+prev.slice(5)}月の金額をコピー</button>` : ''}
+      ${prev >= state.startYm ? `<button class="btn" data-act="copy">${+prev.slice(5)}月の内容をコピー</button>` : ''}
       <form class="add" id="addForm"><input id="newName" placeholder="新しい人の名前" enterkeyhint="done"><button class="btn">＋ 追加</button></form>
     </div>
     <div class="actions">
@@ -423,19 +534,12 @@ function renderMonth() {
   const v = document.getElementById('view');
   v.querySelectorAll('input.amt').forEach(inp => {
     inp.addEventListener('input', () => {
-      const val = parseYen(inp.value);
-      setAmt(ym, inp.dataset.id, val);
-      const tr = inp.closest('tr');
-      tr.classList.toggle('zero', !val);
-      tr.querySelector('.w').textContent = val ? yen(withholding(val)) : '—';
-      tr.querySelector('.n').textContent = val ? yen(net(val)) : '—';
-      tr.querySelector('[data-pdf]').disabled = !val;
-      const t2 = totals(ym);
-      for (const [id, x] of [['tg', t2.g], ['tw', t2.w], ['tn', t2.n]]) document.getElementById(id).textContent = yen(x) + '円';
-      for (const [id, x] of [['fg', t2.g], ['fw', t2.w], ['fn', t2.n]]) document.getElementById(id).textContent = yen(x);
-      renderBackupInfo();
+      if (inp.readOnly) return;
+      setAmt(ym, inp.dataset.id, parseYen(inp.value));
+      refreshRow(inp.dataset.id);
     });
-    inp.addEventListener('blur', () => { const val = parseYen(inp.value); inp.value = val ? yen(val) : ''; });
+    inp.addEventListener('click', () => { if (inp.readOnly) toggleCounts(inp.dataset.id, true); });
+    inp.addEventListener('blur', () => { const val = amt(ym, inp.dataset.id); inp.value = val ? yen(val) : ''; });
     inp.addEventListener('keydown', e => {
       if (e.key !== 'Enter') return;
       const all = [...v.querySelectorAll('input.amt')];
@@ -443,6 +547,35 @@ function renderMonth() {
       if (next) next.focus(); else inp.blur();
     });
   });
+  // コマ数・その他の金額
+  v.querySelectorAll('tr.crow input.cnt').forEach(inp => {
+    const isExt = inp.classList.contains('ext');
+    inp.addEventListener('input', () => {
+      if (isExt) setExtra(ym, inp.dataset.id, parseSigned(inp.value));
+      else setCount(ym, inp.dataset.id, inp.dataset.rid, parseYen(inp.value));
+      refreshRow(inp.dataset.id);
+    });
+    inp.addEventListener('blur', () => {
+      if (isExt) { const x = extraAmt(ym, inp.dataset.id); inp.value = x ? yen(x) : ''; }
+      else inp.value = parseYen(inp.value) || '';
+    });
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const all = [...inp.closest('tr').querySelectorAll('input.cnt')];
+      const next = all[all.indexOf(inp) + 1];
+      if (next) next.focus(); else inp.blur();
+    });
+  });
+  // クラスの単価
+  document.getElementById('ratebox').addEventListener('toggle', e => { rateOpen = e.target.open; });
+  v.querySelectorAll('input.rname').forEach(inp => inp.addEventListener('change', () => {
+    const r = rateById(inp.dataset.rid), n = inp.value.trim();
+    if (n) r.name = n;
+    save(); render();
+  }));
+  v.querySelectorAll('input.rprice').forEach(inp => inp.addEventListener('change', () => {
+    setRatePrice(inp.dataset.rid, parseYen(inp.value)); render();
+  }));
   document.getElementById('payDate').addEventListener('change', e => {
     if (e.target.value) state.payDate[ym] = e.target.value; else delete state.payDate[ym];
     save();
@@ -454,6 +587,42 @@ function renderMonth() {
     state.people.push({ id: 'p' + Date.now(), name });
     save(); render();
   });
+}
+
+function countRow(p, open) {
+  const c = cnts(ym, p.id) || {}, ex = extraAmt(ym, p.id);
+  return `<tr class="crow" data-for="${p.id}" ${open ? '' : 'hidden'}><td colspan="5"><div class="cgrid">
+    ${state.rates.map(r => `<label class="citem"><span class="cn">${esc(r.name)}<span class="cp">${yen(priceOf(ym, r.id))}円</span></span>
+      <input class="cnt" inputmode="numeric" enterkeyhint="next" value="${c[r.id] || ''}" placeholder="0" data-id="${p.id}" data-rid="${r.id}" aria-label="${esc(p.name)}の${esc(r.name)}のコマ数"><span>コマ</span></label>`).join('')}
+    <label class="citem"><span class="cn">その他（手当など）</span>
+      <input class="cnt ext" inputmode="numeric" enterkeyhint="done" value="${ex ? yen(ex) : ''}" placeholder="0" data-id="${p.id}" aria-label="${esc(p.name)}のその他の金額"><span>円</span></label>
+  </div></td></tr>`;
+}
+function toggleCounts(id, force) {
+  const open = force ?? !openC.has(id);
+  if (open) openC.add(id); else openC.delete(id);
+  const row = document.querySelector(`tr.crow[data-for="${id}"]`);
+  if (row) row.hidden = !open;
+  document.querySelector(`[data-cnt="${id}"]`)?.setAttribute('aria-expanded', open);
+}
+// 1人分の行と合計だけを書き直す（入力中の欄はそのまま）
+function refreshRow(id) {
+  const tr = document.querySelector(`tr[data-row="${id}"]`);
+  if (!tr) return;
+  const a = amt(ym, id), uc = usesCounts(ym, id);
+  const inp = tr.querySelector('input.amt');
+  if (document.activeElement !== inp) inp.value = a ? yen(a) : '';
+  inp.readOnly = uc;
+  inp.title = uc ? 'コマ数から計算' : '';
+  tr.classList.toggle('zero', !a);
+  tr.querySelector('.w').textContent = a ? yen(withholding(a)) : '—';
+  tr.querySelector('.n').textContent = a ? yen(net(a)) : '—';
+  tr.querySelector('[data-pdf]').disabled = !a;
+  tr.querySelector('[data-cnt]').classList.toggle('on', uc);
+  const t = totals(ym);
+  for (const [k, x] of [['tg', t.g], ['tw', t.w], ['tn', t.n]]) document.getElementById(k).textContent = yen(x) + '円';
+  for (const [k, x] of [['fg', t.g], ['fw', t.w], ['fn', t.n]]) document.getElementById(k).textContent = yen(x);
+  renderBackupInfo();
 }
 
 // ---- 年間まとめ画面 ----
@@ -529,9 +698,21 @@ function statementHtml(p, k) {
       <tr><th>源泉所得税 <small>（復興特別所得税を含む・10.21%）</small></th><td>−${yen(w)}円</td></tr>
       <tr class="total"><th>差引支払額（お振込額）</th><td>${yen(a - w)}円</td></tr>
     </table>
-    ${pd ? `<div class="paid">支払日　${dateLabel(pd)}</div>` : ''}
+    ${breakdownHtml(k, p.id)}
+    ${pd ?`<div class="paid">支払日　${dateLabel(pd)}</div>` : ''}
     ${issuerHtml()}
   </section>`;
+}
+// 支払明細の「内訳」（コマ数で計算した人だけ）
+function breakdownHtml(k, id) {
+  if (!usesCounts(k, id)) return '';
+  const c = cnts(k, id) || {}, ex = extraAmt(k, id);
+  const rows = state.rates.filter(r => c[r.id] > 0).map(r => {
+    const pr = priceOf(k, r.id);
+    return `<tr><td>${esc(r.name)}</td><td>${yen(pr)}円</td><td>${c[r.id]}コマ</td><td>${yen(pr * c[r.id])}円</td></tr>`;
+  });
+  if (ex) rows.push(`<tr><td>その他（手当など）</td><td></td><td></td><td>${yen(ex)}円</td></tr>`);
+  return `<table class="bd"><thead><tr><th>内訳</th><th>単価</th><th>コマ数</th><th>金額</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
 }
 function listHtml(k) {
   const ps = paidPeople(k), t = totals(k), pd = state.payDate[k];
@@ -817,6 +998,7 @@ function importGrid(grid, label) {
     const p = byName.get(nameKey(a.name));
     state.pay[a.key] = state.pay[a.key] || {};
     state.pay[a.key][p.id] = a.amount;
+    clearCounts(a.key, p.id); // Excelの金額を優先する
     if (recent.includes(a.key)) p.hidden = false;
   }
   if (keys.length && keys[0] < state.startYm) state.startYm = keys[0];
@@ -853,13 +1035,13 @@ function applyRows(rows) {
     let p = byName.get(nameKey(r.name));
     if (!p) { p = { id: 'p' + Date.now() + '_' + i, name: r.name }; state.people.push(p); byName.set(nameKey(r.name), p); }
     p.hidden = false;
-    if (r.amount !== null) setAmt(ym, p.id, r.amount);
+    if (r.amount !== null) { clearCounts(ym, p.id); setAmt(ym, p.id, r.amount); }
   });
   save(); render();
 }
 function resetAll() {
   if (!confirm('この端末に入っている名前・金額・設定を、すべて消して最初の状態に戻します。\n元に戻せません。必要なら先に「バックアップを保存」してください。\n\n消してよろしいですか？')) return;
-  state = structuredClone(SEED); save();
+  state = fresh(); save();
   ym = todayYm() < state.startYm ? state.startYm : todayYm();
   year = +ym.slice(0, 4);
   loadIssuer(); render();
@@ -903,6 +1085,8 @@ document.addEventListener('click', async e => {
     if (!confirm(`${p.name} さんを一覧から外しますか？（過去の記録は残ります。あとで戻せます）`)) return;
     p.hidden = true; save(); render(); return;
   }
+  if (d.cnt) { toggleCounts(d.cnt); return; }
+  if (d.delrate) { deleteRate(d.delrate); return; }
   if (d.show) { person(d.show).hidden = false; save(); render(); return; }
   if (d.rename) {
     const p = person(d.rename);
@@ -917,8 +1101,14 @@ document.addEventListener('click', async e => {
     case 'ynext': year++; render(); break;
     case 'copy': {
       const prev = ymAdd(ym, -1);
-      if (Object.keys(state.pay[ym] || {}).length && !confirm(`${ymLabel(ym)}にすでに入っている金額を、${ymLabel(prev)}の金額で上書きしますか？`)) return;
+      const has = Object.keys(state.pay[ym] || {}).length || Object.keys(state.counts[ym] || {}).length;
+      if (has && !confirm(`${ymLabel(ym)}にすでに入っている内容を、${ymLabel(prev)}の内容で上書きしますか？`)) return;
       state.pay[ym] = { ...(state.pay[prev] || {}) };
+      state.counts[ym] = structuredClone(state.counts[prev] || {});
+      state.extra[ym] = structuredClone(state.extra[prev] || {});
+      // コマ数で計算している人は、この月の単価で計算し直す
+      const ids = new Set([...Object.keys(state.counts[ym]), ...Object.keys(state.extra[ym])]);
+      if (ids.size) { snapRates(ym); ids.forEach(id => syncAmt(ym, id)); }
       save(); render(); break;
     }
     case 'pdf-list':
@@ -940,6 +1130,7 @@ document.addEventListener('click', async e => {
       download('報酬_一覧.csv', '﻿' + lines.join('\r\n'), 'text/csv');
       break;
     }
+    case 'add-rate': addRate(); break;
     case 'paste-excel': applyPaste(); break;
     case 'pick-xlsx': document.getElementById('xlsxFile').click(); break;
     case 'open-paste': {
@@ -962,9 +1153,7 @@ document.addEventListener('click', async e => {
 function restoreFrom(text) {
   const d = JSON.parse(text);
   if (!d || !Array.isArray(d.people) || !d.pay || !d.startYm) throw new Error('format');
-  d.payDate = d.payDate || {};
-  d.issuer = d.issuer || { name: '', addr: '' };
-  state = d; save();
+  state = normalize(d); save();
   ym = todayYm() < state.startYm ? state.startYm : todayYm();
   year = +ym.slice(0, 4);
   loadIssuer(); render();
